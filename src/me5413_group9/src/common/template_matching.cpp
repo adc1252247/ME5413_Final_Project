@@ -27,7 +27,8 @@ namespace matching {
     // === Variables === :::::::::::::::::::::::::::::::::::::::::::::::
     // ================= :::::::::::::::::::::::::::::::::::::::::::::::
     const float RATIO_THRESH = 0.7f;
-    
+    const int MIN_MATCHES = 10;
+
     std::vector<Template> box_templates;
 
     cv::Ptr<cv::Feature2D> detector;
@@ -111,9 +112,20 @@ namespace matching {
             for ( size_t j = 0; j < all_matches.size(); j++ )
                 if ( all_matches[j].size() >=2 && (all_matches[j][0].distance < RATIO_THRESH * all_matches[j][1].distance) )
                     good_matches.push_back(all_matches[j][0]);
+
+            if ( good_matches.size() < MIN_MATCHES )
+                continue;
+
+            
         }
 
         return {};
+    }
+
+    size_t template_feature_count(int box_id) {
+        if ( (box_id < 1) || (box_id > 9) )
+            throw std::out_of_range("Box '" + std::to_string(box_id) + "' does not exist!");
+        return box_templates[box_id - 1].keypoints.size();
     }
 }
 

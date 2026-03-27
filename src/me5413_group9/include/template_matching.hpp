@@ -47,4 +47,9 @@ namespace matching {
     /// @param image (in/out) The image to draw onto
     /// @param matches The matched boxes to draw/label
     void draw(cv::Mat& image, const std::vector<Matched>& matches);
+
+    /// @brief Number of features computed for a box's image/template
+    /// @param box_id Box id, 1-9
+    /// @throws std::out_of_range if value not in [1, 9]
+    size_t template_feature_count(int box_id);
 }
