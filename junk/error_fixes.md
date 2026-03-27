@@ -62,3 +62,13 @@ sudo apt install -y ros-noetic-gazebo-ros-control
 sudo apt-get install ros-noetic-gazebo-ros-pkgs ros-noetic-gazebo-plugins
 
 ```
+
+```sh
+sudo apt-get install ros-noetic-jackal-navigation
+
+```
+
+```sh
+sudo apt-get install ros-noetic-rviz-imu-plugin
+
+```
