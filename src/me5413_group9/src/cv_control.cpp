@@ -47,6 +47,9 @@ int main(int argc, char** argv) {
                 manual::set_ang(-ANG_SPEED);
                 break;
 
+            case 'x':
+                cv::imwrite("cv_control_capture.png", sensors::get_image());
+
             default:
                 manual::release();
         }
