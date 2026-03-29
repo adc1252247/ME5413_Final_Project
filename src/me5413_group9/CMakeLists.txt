@@ -55,7 +55,7 @@ target_link_libraries(cv_control ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 
 
-file(GLOB cmake_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cmake")
+file(GLOB_RECURSE cmake_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cmake")
 list(SORT cmake_files)
 
 message(STATUS "Files: ${cmake_files}")
