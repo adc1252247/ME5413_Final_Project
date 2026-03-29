@@ -2,6 +2,8 @@
     <!-- Using the simulation clock -->
     <param name="/use_sim_time" value="true"/>
 
+    <env name="GAZEBO_PLUGIN_PATH" value="$(find me5413_world)/lib:$GAZEBO_PLUGIN_PATH"/>
+
     <!-- Load the project world into Gazebo -->
     <include file="$(find gazebo_ros)/launch/empty_world.launch">
         <arg name="world_name" value="$(find me5413_world)/worlds/me5413_project_2526.world"/>
@@ -21,7 +23,7 @@
     
     <!-- comment the following out if you do not want the big red obstacle for mapping etc-->
     <node name="spawn_box" pkg="gazebo_ros" type="spawn_model" output="screen"
-            args="-urdf 
+            args="-urdf  
                 -param planar_box_description 
                 -model planar_box 
                 -x 6.0 -y 0.0 -z 3.5" />
