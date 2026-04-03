@@ -1,3 +1,8 @@
+```sh
+rostopic pub -1 /rviz_panel/respawn_objects std_msgs/Int16 "data: 1"
+
+```
+
 I had some issues - I did not use full installation, I suspect this is the reason for the issue
 
 ```txt
