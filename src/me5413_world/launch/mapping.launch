@@ -7,6 +7,13 @@
   <!-- <include file="$(find jackal_navigation)/launch/include/gmapping.launch"/> -->
   <include file="$(find me5413_group9)/launch/gmapping.launch"/>
 
+  <!-- Load DWA Local Planner Parameters -->
+  <rosparam command="load" file="$(find me5413_world)/config/dwa_local_planner_params.yaml" />	
+  
+  <!-- Load costmap parameters -->
+  <rosparam command="load" file="$(find me5413_world)/config/local_costmap_params.yaml" />
+  <rosparam command="load" file="$(find me5413_world)/config/global_costmap_params.yaml" />
+
   <!-- Move Base (navigation) -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
 
