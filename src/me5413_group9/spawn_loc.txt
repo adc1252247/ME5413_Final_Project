@@ -1,0 +1,1 @@
+rosservice call /gazebo/set_model_state '{model_state: {model_name: "jackal", pose: {position: {x: 2.3, y: -10.6, z: 0.1}, orientation: {x: 0.0, y: 0.0, z: -0.009966, w: 0.999950}}, reference_frame: "world"}}'

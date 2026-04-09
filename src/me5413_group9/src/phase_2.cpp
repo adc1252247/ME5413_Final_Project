@@ -93,8 +93,8 @@ int main(int argc, char** argv) {
 
     goal_2.position.x = 7.17949; goal_2.position.y = -3.73237; // Burst target
 
-    goal_3.position.x = 25.238539; goal_3.position.y = -4.2360713;
-    goal_3.orientation.z = -0.009966; goal_3.orientation.w = 0.999950;
+    goal_3.position.x = -0.0114748; goal_3.position.y = -0.0079040;
+    goal_3.orientation.z = -0.0092086; goal_3.orientation.w = 0.9999576;
 
     // --- 2. GET CURRENT POSE ---
     geometry_msgs::TransformStamped tf_start;

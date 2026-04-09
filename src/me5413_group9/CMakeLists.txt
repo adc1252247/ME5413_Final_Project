@@ -60,6 +60,9 @@ add_executable(phase_2_node src/phase_2.cpp ${COMMON_SOURCES})
 target_link_libraries(phase_2_node ${catkin_LIBRARIES} ${OpenCV_LIBS})
 add_dependencies(phase_2_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
+add_executable(phase_2_slope_node src/phase_2_slope.cpp)
+target_link_libraries(phase_2_slope_node ${catkin_LIBRARIES})
+
 file(GLOB_RECURSE cmake_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cmake")
 list(SORT cmake_files)
 
