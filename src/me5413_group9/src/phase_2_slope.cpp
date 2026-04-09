@@ -3,191 +3,154 @@
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/LaserScan.h>
 #include <tf2/utils.h>
-#include <vector>
-#include <string>
 #include <cmath>
 #include <algorithm>
 
-enum class StopTrigger {
-    LIDAR,      // Stop when front obstacle <= value
-    CALCULATED, // Stop when integrated distance >= value
-    SLOPE_END   // Stop when pitch angle returns to flat (NEW)
-};
-
-struct MoveInstruction {
-    std::string type;
-    StopTrigger trigger;
-    double value;       // Distance, Degrees, or Pitch Threshold
-    double speed;
-};
-
-class SlopeRunner {
+class SmoothedWallFollower {
 private:
     ros::NodeHandle nh_;
     ros::Publisher vel_pub_;
     ros::Subscriber imu_sub_;
     ros::Subscriber laser_sub_;
     
-    double target_yaw_;
-    double current_imu_yaw_;
-    double current_imu_pitch_; // Track pitch for slope detection
-    double current_front_dist_; 
+    double initial_slope_yaw_ = 0.0;
+    double current_imu_yaw_ = 0.0;
+    double current_imu_pitch_ = 0.0; 
+    double current_imu_roll_  = 0.0; 
+    
+    double current_front_dist_ = 99.0; 
+    double current_left_dist_  = 99.0; 
+
     bool imu_ready_ = false;
     bool laser_ready_ = false;
-    
-    double Kp = 1.8; 
-    double Kd = 0.2;
+    bool baseline_set_ = false;
+    bool is_on_slope_ = false; 
 
     void imuCallback(const sensor_msgs::Imu::ConstPtr& msg) {
-        // Extract Yaw for heading
         current_imu_yaw_ = tf2::getYaw(msg->orientation);
-        
-        // Extract Pitch for slope detection
         tf2::Quaternion q;
         tf2::fromMsg(msg->orientation, q);
         tf2::Matrix3x3 m(q);
         double roll, pitch, yaw;
         m.getRPY(roll, pitch, yaw);
         current_imu_pitch_ = pitch;
-
+        current_imu_roll_  = roll; 
         imu_ready_ = true;
     }
 
     void laserCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
+        if (!baseline_set_) return;
         int num_beams = msg->ranges.size();
+        
         int center_idx = num_beams / 2;
         double min_f = msg->range_max;
         for (int i = center_idx - 2; i <= center_idx + 2; ++i) {
-            if (i >= 0 && i < num_beams) {
-                float r = msg->ranges[i];
-                if (r > 0.3 && r < msg->range_max) min_f = std::min(min_f, (double)r);
-            }
+            if (i >= 0 && i < num_beams && msg->ranges[i] > 0.1) min_f = std::min(min_f, (double)msg->ranges[i]);
         }
         current_front_dist_ = min_f;
+
+        if (is_on_slope_) {
+            double side_min_y = msg->range_max;
+            double front_left_penalty = 0.0;
+
+            for (int i = 0; i < num_beams; ++i) {
+                float r = msg->ranges[i];
+                if (r < 0.2 || r > msg->range_max) continue;
+
+                double ray_angle = msg->angle_min + (i * msg->angle_increment);
+                double corridor_angle = (current_imu_yaw_ + ray_angle) - initial_slope_yaw_;
+                while (corridor_angle > M_PI) corridor_angle -= 2.0 * M_PI;
+                while (corridor_angle < -M_PI) corridor_angle += 2.0 * M_PI;
+
+                if (corridor_angle >= (45.0 * M_PI / 180.0) && corridor_angle <= (110.0 * M_PI / 180.0)) {
+                    double lat_y = r * std::sin(corridor_angle);
+                    side_min_y = std::min(side_min_y, lat_y);
+                }
+
+                if (corridor_angle > (5.0 * M_PI / 180.0) && corridor_angle < (45.0 * M_PI / 180.0)) {
+                    double x_dist = r * std::cos(corridor_angle);
+                    if (x_dist < 1.2) { 
+                        front_left_penalty = std::max(front_left_penalty, (1.2 - x_dist) * 0.6);
+                    }
+                }
+            }
+            current_left_dist_ = side_min_y - front_left_penalty;
+        } else {
+            double pure_y = msg->range_max;
+            for (int i = 0; i < num_beams; ++i) {
+                float r = msg->ranges[i];
+                if (r < 0.3) continue;
+                double ray_ang = msg->angle_min + (i * msg->angle_increment);
+                double corr_ang = (current_imu_yaw_ + ray_ang) - initial_slope_yaw_;
+                if (std::abs(corr_ang - M_PI/2.0) < 0.2) pure_y = std::min(pure_y, (double)r);
+            }
+            current_left_dist_ = pure_y;
+        }
         laser_ready_ = true;
     }
 
 public:
-    SlopeRunner() {
+    SmoothedWallFollower() {
         vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
-        imu_sub_ = nh_.subscribe("/imu/data", 10, &SlopeRunner::imuCallback, this);
-        laser_sub_ = nh_.subscribe("/front/scan", 10, &SlopeRunner::laserCallback, this);
-        
-        ROS_INFO("Waiting for Sensors...");
-        while (ros::ok() && (!imu_ready_ || !laser_ready_)) {
-            ros::spinOnce();
-            ros::Duration(0.1).sleep();
-        }
-        target_yaw_ = current_imu_yaw_;
+        imu_sub_ = nh_.subscribe("/imu/data", 10, &SmoothedWallFollower::imuCallback, this);
+        laser_sub_ = nh_.subscribe("/front/scan", 10, &SmoothedWallFollower::laserCallback, this);
+        while (ros::ok() && !imu_ready_) { ros::spinOnce(); ros::Duration(0.1).sleep(); }
+        initial_slope_yaw_ = current_imu_yaw_;
+        baseline_set_ = true;
+        while (ros::ok() && !laser_ready_) { ros::spinOnce(); ros::Duration(0.1).sleep(); }
     }
 
-    void executeMove(const MoveInstruction& inst) {
+    void runClimb() {
         ros::Rate loop_rate(20);
         geometry_msgs::Twist cmd;
-        double dt = 0.05;
-        double previous_error = 0.0;
-        double distance_integrated = 0.0;
-        ros::Time start_time = ros::Time::now();
 
-        // Trapezoidal Params
-        const double accel_dist = 0.5;
-        const double decel_dist = 0.8;
-        const double min_speed = 0.2;
-
-        if (inst.type == "ROTATE") {
-            target_yaw_ += (inst.value * M_PI / 180.0);
-            while (target_yaw_ > M_PI) target_yaw_ -= 2.0 * M_PI;
-            while (target_yaw_ < -M_PI) target_yaw_ += 2.0 * M_PI;
-        }
+        // --- Velocity Parameters ---
+        const double APPROACH_SPEED = 0.5; // Slow entry to prevent skidding
+        const double CLIMB_SPEED = 0.9;    // Your preferred full speed
 
         while (ros::ok()) {
-            ros::spinOnce(); 
+            ros::spinOnce();
+            double pitch_deg = std::abs(current_imu_pitch_ * 180.0 / M_PI);
+            double roll_deg  = std::abs(current_imu_roll_ * 180.0 / M_PI);
+            double total_tilt = std::sqrt(pitch_deg*pitch_deg + roll_deg*roll_deg);
 
-            // --- Heading PID ---
-            double error = target_yaw_ - current_imu_yaw_;
-            while (error > M_PI) error -= 2.0 * M_PI;
-            while (error < -M_PI) error += 2.0 * M_PI;
-            double derivative = (error - previous_error) / dt;
-            double turn_correction = (Kp * error) + (Kd * derivative);
-            previous_error = error;
-            turn_correction = std::max(-1.0, std::min(1.0, turn_correction));
-
-            if (inst.type == "FORWARD") {
-                distance_integrated += std::abs(inst.speed) * dt;
-                double dist_left = 99.9; // Default large
-                bool should_break = false;
-
-                // Stop Triggers
-                if (inst.trigger == StopTrigger::LIDAR) {
-                    dist_left = current_front_dist_ - inst.value;
-                    if (current_front_dist_ <= inst.value) should_break = true;
-                } 
-                else if (inst.trigger == StopTrigger::CALCULATED) {
-                    dist_left = inst.value - distance_integrated;
-                    if (distance_integrated >= inst.value) should_break = true;
-                }
-                else if (inst.trigger == StopTrigger::SLOPE_END) {
-                    // Logic: Stop if Pitch is near zero (less than ~1 degree)
-                    // We also ensure we've moved at least 1m to avoid stopping at the start
-                    double pitch_deg = std::abs(current_imu_pitch_ * 180.0 / M_PI);
-                    if (distance_integrated > 1.0 && pitch_deg < inst.value) should_break = true;
-                }
-
-                if (should_break) break;
-
-                // Velocity Profile
-                double current_v = inst.speed;
-                if (distance_integrated < accel_dist) {
-                    current_v = min_speed + (inst.speed - min_speed) * (distance_integrated / accel_dist);
-                }
-                if (dist_left < decel_dist && inst.trigger != StopTrigger::SLOPE_END) {
-                    double ramp_down_v = min_speed + (inst.speed - min_speed) * (dist_left / decel_dist);
-                    current_v = std::min(current_v, ramp_down_v);
-                }
-                current_v = std::max(min_speed, current_v);
-
-                cmd.linear.x = current_v;
-                cmd.angular.z = turn_correction;
-
-                if ((ros::Time::now() - start_time).toSec() > 40.0) break;
-            } 
-            else { // ROTATE
-                cmd.linear.x = 0.0;
-                cmd.angular.z = turn_correction; 
-                if (std::abs(error) < 0.02) break; 
+            if (!is_on_slope_ && total_tilt > 5.0) { 
+                is_on_slope_ = true; 
+                ROS_INFO("=== SLOPE ENTERED: Increasing to Full Speed ===");
             }
+            if (is_on_slope_ && total_tilt < 1.5) break;
+
+            double yaw_err = initial_slope_yaw_ - current_imu_yaw_;
+            while (yaw_err > M_PI) yaw_err -= 2.0 * M_PI;
+            while (yaw_err < -M_PI) yaw_err += 2.0 * M_PI;
+
+            double wall_err = current_left_dist_ - 0.51;
+            double k_yaw = (wall_err < -0.1) ? 0.12 : 1.2;
+
+            double steer = (k_yaw * yaw_err) + (2.0 * wall_err);
+
+            // --- Dynamic Velocity Logic ---
+            double base_v = is_on_slope_ ? CLIMB_SPEED : APPROACH_SPEED;
+            
+            // Apply your preferred steering brake
+            cmd.linear.x = (std::abs(steer) > 0.4) ? (base_v * 0.5) : base_v;
+            
+            // Front brake safety
+            if (current_front_dist_ < 0.3) cmd.linear.x = 0.05;
+            
+            cmd.angular.z = std::max(-1.4, std::min(1.4, steer));
 
             vel_pub_.publish(cmd);
             loop_rate.sleep();
         }
-        
         cmd.linear.x = 0; cmd.angular.z = 0;
         vel_pub_.publish(cmd);
-        ros::Duration(0.8).sleep(); 
     }
 };
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "phase_2_slope_final");
-    SlopeRunner runner;
-
-    std::vector<MoveInstruction> mission = {
-        {"FORWARD", StopTrigger::CALCULATED, 5.0, 0.8},   
-        {"FORWARD", StopTrigger::LIDAR,      1.8, 0.8},  
-        {"ROTATE",  StopTrigger::CALCULATED, -45.0, 0.5},
-        {"FORWARD", StopTrigger::CALCULATED, 2.65, 0.8},
-        {"ROTATE",  StopTrigger::CALCULATED, 45.0, 0.5},
-        {"FORWARD", StopTrigger::LIDAR,      1.5, 0.8},
-        {"ROTATE",  StopTrigger::CALCULATED, 45.0, 0.3},
-        {"FORWARD", StopTrigger::CALCULATED, 2.65, 0.8},
-        {"ROTATE",  StopTrigger::CALCULATED, -45.0, 0.5},
-        
-        // --- UPDATED FINAL STEP ---
-        // trigger: SLOPE_END
-        // value: 1.5 (Stop when pitch is less than 1.5 degrees)
-        {"FORWARD", StopTrigger::SLOPE_END, 1.5, 0.7}
-    };
-
-    for (const auto& step : mission) { runner.executeMove(step); }
+    ros::init(argc, argv, "slope_node");
+    SmoothedWallFollower runner;
+    runner.runClimb();
     return 0;
 }
