@@ -27,7 +27,6 @@ private:
     bool is_on_slope_ = false; 
 
     void imuCallback(const sensor_msgs::Imu::ConstPtr& msg) {
-        current_imu_yaw_ = tf2::getYaw(msg->orientation);
         tf2::Quaternion q;
         tf2::fromMsg(msg->orientation, q);
         tf2::Matrix3x3 m(q);
@@ -35,6 +34,7 @@ private:
         m.getRPY(roll, pitch, yaw);
         current_imu_pitch_ = pitch;
         current_imu_roll_  = roll; 
+        current_imu_yaw_ = yaw;
         imu_ready_ = true;
     }
 
@@ -106,7 +106,7 @@ public:
 
         // --- Velocity Parameters ---
         const double APPROACH_SPEED = 0.5; // Slow entry to prevent skidding
-        const double CLIMB_SPEED = 0.9;    // Your preferred full speed
+        const double CLIMB_SPEED = 0.8;    // Your preferred full speed
 
         while (ros::ok()) {
             ros::spinOnce();
@@ -136,7 +136,7 @@ public:
             cmd.linear.x = (std::abs(steer) > 0.4) ? (base_v * 0.5) : base_v;
             
             // Front brake safety
-            if (current_front_dist_ < 0.3) cmd.linear.x = 0.05;
+            if (current_front_dist_ < 0.6) cmd.linear.x = 0.05;
             
             cmd.angular.z = std::max(-1.4, std::min(1.4, steer));
 
@@ -153,4 +153,5 @@ int main(int argc, char** argv) {
     SmoothedWallFollower runner;
     runner.runClimb();
     return 0;
+    ROS_INFO("=== SLOPE CLIMB COMPLETE: PHASE 2 DONE! ===");
 }
