@@ -4,19 +4,19 @@
  * @brief Node for transforming the Velodyne points to a LaserScan usable by gmapping and similar.
  * 
  * @note The intensities of the LaserScan represent the height of the nearest obstacle.
+ * @todo Change to "class" based - eg. value of 0 is empty, 100 is a box, 200 is a wall, 300 is else
  * 
- * @internal Fields
- *   x: offset 0
- *   y: offset 4
- *   z: offset 8
- *   intensity: offset 12
- *   ring:      offset 16
- *   time:      offset 18
+ *   @note Useful ranges of values
+ * For Velodyne 16
+ *   Floor height: 0.385 +/- 0.005
+ *   5m max range for bottom of doorframe
+ * For Velodyne 32
+ *   Floor height: 0.42 +/- 0.02 (0.01 produces abt 5/360 errors)
+ *   9m max range for bottom of doorframe
+ *   13m max range for combined
  * 
- * 0.385 +/- 0.005 seems reasonable for Velodyne 16
- * 0.42 +/- 0.01 seems reasonable for Velodyne 32
- * 
- * Change to: Max height difference of +/-0.005cm from 0.385, max linear distance of 7.2
+ *   @note More stuff...
+ * Door-frame lower corner is in range 10-15cm (hard to detect with only bottom)
  */
 #include <array>
 #include <cmath>
@@ -33,7 +33,9 @@
 
 /// ====================== :::::::::::::::::::::::::::::::::::::::::::::
 /// === Points To Scan === :::::::::::::::::::::::::::::::::::::::::::::
+// All variables initialized in main
 ros::Publisher pub;
+float max_range;
 
 inline bool value_between(float v, float lower, float upper) {
     return lower <= v && upper >= v;
@@ -41,7 +43,6 @@ inline bool value_between(float v, float lower, float upper) {
 
 void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
     /// ::: "CONFIG"
-    const float MAX_RANGE    = 9.0;
     const float MAX_DRIVABLE = 0.02;
     const float ERR_DISTANCE = 0.005;
     const float FLOOR        = -0.42;
@@ -59,8 +60,8 @@ void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
     scan_msg.time_increment = 0;
     scan_msg.scan_time = 0;
 
-    scan_msg.range_min = 0.3;
-    scan_msg.range_max = MAX_RANGE;   // Max range at which it can resolve the small "door steps"
+    scan_msg.range_min = 0.3;         // This was set a long time ago - best to change
+    scan_msg.range_max = max_range;   // Max range at which it can resolve the small "door steps"
 
     // scan_msg.ranges      = ranges;
     // scan_msg.intensities = intensities;
@@ -126,7 +127,7 @@ void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
     /// ::: 2) Compute the furthest drivable distance for each 360 angle
     ///        Assumption: All obstacles only made of vertical walls
     for ( size_t a = 0; a < 360; a++ ) {
-        float last_d   = 0;
+        float wall_d   = 0;
         bool unblocked = true;
 
         for ( size_t r = 0; r < 32; r++ ) {
@@ -137,7 +138,7 @@ void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
             if ( std::isnan(d) || std::isnan(z) )
                 continue;
 
-            if ( d > MAX_RANGE )
+            if ( d > max_range )
                 break;
 
             // Find first obstacle
@@ -147,7 +148,7 @@ void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
                     
                     ranges[a]      = d;
                     intensities[a] = z;
-                    last_d    = d;
+                    wall_d    = d;
                     unblocked = false;
 
                     if ( z < 0 )
@@ -157,11 +158,17 @@ void publish_scan(const sensor_msgs::PointCloud2ConstPtr& msg) {
 
             // Find top of wall
             else {
-                if ( fabs(last_d - d) <= ERR_DISTANCE )
+                if ( fabs(wall_d - d) <= ERR_DISTANCE )
                     intensities[a] = z;
+
+                // Found wall segment closer - top of door frame
+                else if ( d < wall_d ) {
+                    ranges[a] = d;
+                    intensities[a] = z;
+                }
                 
-                else
-                    break;
+                // else
+                    // break;
             }
         }
 
@@ -200,11 +207,17 @@ int main(int argc, char** argv) {
     std::string points_topic, scan_topic;
     nh.param<std::string>("points_topic", points_topic, "/mid/points");
     nh.param<std::string>("scan_topic", scan_topic, "/front/scan");
+    nh.param<float>("max_range", max_range, 20); /// @todo - Change to 20
 
     if ( topic_in_use(scan_topic) ) {
         ROS_ERROR("Topic '%s' is already used!", scan_topic.c_str());
         throw std::runtime_error("Topic for points_to_scan already in use!");
     }
+
+    ROS_INFO("Starting 'points_to_scan' with following arguments:");
+    ROS_INFO("  Sub topic: '%s'", points_topic.c_str());
+    ROS_INFO("  Pub topic: '%s'", scan_topic.c_str());
+    ROS_INFO("  Max range: '%.2f'", max_range);
 
     ros::Subscriber sub = nh.subscribe(points_topic, 1, publish_scan);
     pub = nh.advertise<sensor_msgs::LaserScan>(scan_topic, 1);
