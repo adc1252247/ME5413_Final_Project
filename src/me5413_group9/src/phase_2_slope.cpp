@@ -6,152 +6,170 @@
 #include <cmath>
 #include <algorithm>
 
-class SmoothedWallFollower {
+enum State { APPROACH, CLIMB, FINISHED };
+
+class JackalPotentialField {
 private:
     ros::NodeHandle nh_;
     ros::Publisher vel_pub_;
-    ros::Subscriber imu_sub_;
-    ros::Subscriber laser_sub_;
-    
-    double initial_slope_yaw_ = 0.0;
-    double current_imu_yaw_ = 0.0;
-    double current_imu_pitch_ = 0.0; 
-    double current_imu_roll_  = 0.0; 
-    
-    double current_front_dist_ = 99.0; 
-    double current_left_dist_  = 99.0; 
+    ros::Subscriber imu_sub_, laser_sub_;
 
-    bool imu_ready_ = false;
-    bool laser_ready_ = false;
-    bool baseline_set_ = false;
-    bool is_on_slope_ = false; 
+    State current_state_ = APPROACH;
+    double cur_roll_ = 0.0, cur_pitch_ = 0.0, cur_yaw_ = 0.0, start_yaw_ = 0.0;
+    double d_front_ = 99.0, d_left_ = 99.0, d_front_left_ = 99.0;
+    bool imu_init_ = false, laser_init_ = false, baseline_set_ = false;
+    bool mission_complete_ = false;
+
+    // Temporal Accumulators
+    double wind_force_built_up_ = 0.0;
+    double last_angular_z_ = 0.0;
+
+    // --- TUNED PARAMETERS ---
+    const double D_SET = 0.51;          // Desired distance from left wall
+    const double WIND_THRESH = 0.50;    // Heading tolerance (~28 deg)
+    const double WIND_GROWTH = 0.015;   // Building up slowly (Adjusted for 20Hz)
+    const double WIND_MAX = 0.7;        // Max heading correction push
+    const double APPROACH_SPEED = 0.4;
+    const double CLIMB_SPEED = 0.75;
+    const double OBS_THRESHOLD = 0.85;  // Distance to start braking/dodging
+    const double CRITICAL_DIST = 0.40;  // Distance for stationary pivot
+    const double K_WALL = 1.5;          // Wall following gain
+    const double SMOOTH_FACTOR = 0.3;   // Steering low-pass filter
 
     void imuCallback(const sensor_msgs::Imu::ConstPtr& msg) {
         tf2::Quaternion q;
         tf2::fromMsg(msg->orientation, q);
-        tf2::Matrix3x3 m(q);
-        double roll, pitch, yaw;
-        m.getRPY(roll, pitch, yaw);
-        current_imu_pitch_ = pitch;
-        current_imu_roll_  = roll; 
-        current_imu_yaw_ = yaw;
-        imu_ready_ = true;
+        double r, p, y;
+        tf2::Matrix3x3(q).getRPY(r, p, y);
+        cur_roll_ = r;
+        cur_pitch_ = p; 
+        cur_yaw_ = y;
+
+        if (!baseline_set_) {
+            start_yaw_ = cur_yaw_;
+            baseline_set_ = true;
+        }
+        imu_init_ = true;
     }
 
     void laserCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
-        if (!baseline_set_) return;
-        int num_beams = msg->ranges.size();
-        
-        int center_idx = num_beams / 2;
-        double min_f = msg->range_max;
-        for (int i = center_idx - 2; i <= center_idx + 2; ++i) {
-            if (i >= 0 && i < num_beams && msg->ranges[i] > 0.1) min_f = std::min(min_f, (double)msg->ranges[i]);
+        int n = msg->ranges.size();
+        // Narrower front window (center 7 beams)
+        double min_f = 99.0;
+        for (int i = n/2 - 3; i <= n/2 + 3; ++i) {
+            if (msg->ranges[i] > 0.1) min_f = std::min(min_f, (double)msg->ranges[i]);
         }
-        current_front_dist_ = min_f;
-
-        if (is_on_slope_) {
-            double side_min_y = msg->range_max;
-            double front_left_penalty = 0.0;
-
-            for (int i = 0; i < num_beams; ++i) {
-                float r = msg->ranges[i];
-                if (r < 0.2 || r > msg->range_max) continue;
-
-                double ray_angle = msg->angle_min + (i * msg->angle_increment);
-                double corridor_angle = (current_imu_yaw_ + ray_angle) - initial_slope_yaw_;
-                while (corridor_angle > M_PI) corridor_angle -= 2.0 * M_PI;
-                while (corridor_angle < -M_PI) corridor_angle += 2.0 * M_PI;
-
-                if (corridor_angle >= (45.0 * M_PI / 180.0) && corridor_angle <= (110.0 * M_PI / 180.0)) {
-                    double lat_y = r * std::sin(corridor_angle);
-                    side_min_y = std::min(side_min_y, lat_y);
-                }
-
-                if (corridor_angle > (5.0 * M_PI / 180.0) && corridor_angle < (45.0 * M_PI / 180.0)) {
-                    double x_dist = r * std::cos(corridor_angle);
-                    if (x_dist < 1.2) { 
-                        front_left_penalty = std::max(front_left_penalty, (1.2 - x_dist) * 0.6);
-                    }
-                }
-            }
-            current_left_dist_ = side_min_y - front_left_penalty;
-        } else {
-            double pure_y = msg->range_max;
-            for (int i = 0; i < num_beams; ++i) {
-                float r = msg->ranges[i];
-                if (r < 0.3) continue;
-                double ray_ang = msg->angle_min + (i * msg->angle_increment);
-                double corr_ang = (current_imu_yaw_ + ray_ang) - initial_slope_yaw_;
-                if (std::abs(corr_ang - M_PI/2.0) < 0.2) pure_y = std::min(pure_y, (double)r);
-            }
-            current_left_dist_ = pure_y;
-        }
-        laser_ready_ = true;
+        d_front_ = min_f;
+        d_left_ = msg->ranges[n * 3/4];
+        d_front_left_ = msg->ranges[n * 5/8];
+        laser_init_ = true;
     }
 
 public:
-    SmoothedWallFollower() {
+    JackalPotentialField() {
         vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
-        imu_sub_ = nh_.subscribe("/imu/data", 10, &SmoothedWallFollower::imuCallback, this);
-        laser_sub_ = nh_.subscribe("/front/scan", 10, &SmoothedWallFollower::laserCallback, this);
-        while (ros::ok() && !imu_ready_) { ros::spinOnce(); ros::Duration(0.1).sleep(); }
-        initial_slope_yaw_ = current_imu_yaw_;
-        baseline_set_ = true;
-        while (ros::ok() && !laser_ready_) { ros::spinOnce(); ros::Duration(0.1).sleep(); }
+        imu_sub_ = nh_.subscribe("/imu/data", 10, &JackalPotentialField::imuCallback, this);
+        laser_sub_ = nh_.subscribe("/front/scan", 10, &JackalPotentialField::laserCallback, this);
     }
 
-    void runClimb() {
+    void run() {
         ros::Rate loop_rate(20);
-        geometry_msgs::Twist cmd;
-
-        // --- Velocity Parameters ---
-        const double APPROACH_SPEED = 0.5; // Slow entry to prevent skidding
-        const double CLIMB_SPEED = 0.8;    // Your preferred full speed
+        geometry_msgs::Twist stop_cmd;
+        stop_cmd.linear.x = 0.0; stop_cmd.angular.z = 0.0;
 
         while (ros::ok()) {
             ros::spinOnce();
-            double pitch_deg = std::abs(current_imu_pitch_ * 180.0 / M_PI);
-            double roll_deg  = std::abs(current_imu_roll_ * 180.0 / M_PI);
+            if (!imu_init_ || !laser_init_) continue;
+
+            // 1. Calculate Multi-Axis Tilt
+            double pitch_deg = cur_pitch_ * 180.0 / M_PI;
+            double roll_deg  = cur_roll_ * 180.0 / M_PI;
             double total_tilt = std::sqrt(pitch_deg*pitch_deg + roll_deg*roll_deg);
 
-            if (!is_on_slope_ && total_tilt > 5.0) { 
-                is_on_slope_ = true; 
-                ROS_INFO("=== SLOPE ENTERED: Increasing to Full Speed ===");
-            }
-            if (is_on_slope_ && total_tilt < 1.5) break;
-
-            double yaw_err = initial_slope_yaw_ - current_imu_yaw_;
+            // Calculate Heading Error
+            double yaw_err = start_yaw_ - cur_yaw_;
             while (yaw_err > M_PI) yaw_err -= 2.0 * M_PI;
             while (yaw_err < -M_PI) yaw_err += 2.0 * M_PI;
 
-            double wall_err = current_left_dist_ - 0.51;
-            double k_yaw = (wall_err < -0.1) ? 0.12 : 1.2;
+            // --- 2. STATE MACHINE MANAGEMENT ---
+            if (current_state_ == APPROACH && total_tilt > 5.0) {
+                current_state_ = CLIMB;
+                ROS_INFO("=== PHASE 2: CLIMBING STARTED (Total Tilt: %.2f) ===", total_tilt);
+            }
+            
+            // Exit logic: Both Pitch and Roll must be level
+            if (current_state_ == CLIMB && total_tilt < 1.2) { 
+                current_state_ = FINISHED;
+                mission_complete_ = true;
+            }
 
-            double steer = (k_yaw * yaw_err) + (2.0 * wall_err);
+            if (mission_complete_) {
+                vel_pub_.publish(stop_cmd);
+                ROS_INFO("=== SLOPE COMPLETE: HARD STOP EXECUTED ===");
+                ros::Duration(1.0).sleep(); 
+                ros::shutdown();
+                return;
+            }
 
-            // --- Dynamic Velocity Logic ---
-            double base_v = is_on_slope_ ? CLIMB_SPEED : APPROACH_SPEED;
+            // --- 3. VECTOR CALCULATION ---
+            double F_res_x = (current_state_ == APPROACH) ? APPROACH_SPEED : CLIMB_SPEED;
+            double F_res_y = 0.0;
+            bool dodging = false;
+
+            // Front Obstacle Avoidance
+            if (d_front_ < OBS_THRESHOLD) {
+                dodging = true;
+                // Braking logic as we approach wall
+                double range = OBS_THRESHOLD - CRITICAL_DIST;
+                double dist_into_obs = OBS_THRESHOLD - d_front_;
+                double speed_factor = std::max(0.05, 1.0 - (dist_into_obs / range));
+                F_res_x *= speed_factor;
+
+                if (d_front_left_ < (OBS_THRESHOLD + 0.1)) {
+                    F_res_y -= 1.5; // Turn Right (away from wall)
+                } else {
+                    F_res_y += 1.3; // Turn Left (gap available)
+                }
+            } else {
+                // Bi-directional Wall Follow
+                F_res_y += (d_left_ - D_SET) * K_WALL;
+            }
+
+            // Accumulative Cross-wind
+            if (!dodging && std::abs(yaw_err) > WIND_THRESH) {
+                double direction = (yaw_err > 0) ? 1.0 : -1.0;
+                wind_force_built_up_ += direction * WIND_GROWTH;
+            } else {
+                // Quick decay when on track or dodging to reset steering
+                wind_force_built_up_ *= 0.80; 
+            }
+            wind_force_built_up_ = std::max(-WIND_MAX, std::min(wind_force_built_up_, WIND_MAX));
+            F_res_y += wind_force_built_up_;
+
+            // --- 4. OUTPUT MAPPING ---
+            geometry_msgs::Twist cmd;
             
-            // Apply your preferred steering brake
-            cmd.linear.x = (std::abs(steer) > 0.4) ? (base_v * 0.5) : base_v;
-            
-            // Front brake safety
-            if (current_front_dist_ < 0.6) cmd.linear.x = 0.05;
-            
-            cmd.angular.z = std::max(-1.4, std::min(1.4, steer));
+            // Force stationary pivot if dangerously close to front wall
+            if (d_front_ < CRITICAL_DIST) {
+                cmd.linear.x = 0.0;
+            } else {
+                cmd.linear.x = std::max(0.0, std::min(F_res_x, CLIMB_SPEED));
+            }
+
+            // Apply Low-Pass Smoothing to steering
+            double target_steer = std::max(-1.6, std::min(F_res_y, 1.6));
+            cmd.angular.z = (SMOOTH_FACTOR * target_steer) + ((1.0 - SMOOTH_FACTOR) * last_angular_z_);
+            last_angular_z_ = cmd.angular.z;
 
             vel_pub_.publish(cmd);
             loop_rate.sleep();
         }
-        cmd.linear.x = 0; cmd.angular.z = 0;
-        vel_pub_.publish(cmd);
     }
 };
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "slope_node");
-    SmoothedWallFollower runner;
-    runner.runClimb();
+    ros::init(argc, argv, "jackal_smooth_climb_node");
+    JackalPotentialField climber;
+    climber.run();
     return 0;
-    ROS_INFO("=== SLOPE CLIMB COMPLETE: PHASE 2 DONE! ===");
 }

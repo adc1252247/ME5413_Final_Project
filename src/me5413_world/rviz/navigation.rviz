@@ -29,7 +29,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: PointCloud2
+    SyncSource: LaserScan
   - Class: rviz_panel::ME5413ControlPanel
     Name: ME5413ControlPanel
 Preferences:
@@ -247,8 +247,8 @@ Visualization Manager:
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
-            Max Value: 24.2877254486084
-            Min Value: 16.71002197265625
+            Max Value: 9.386788368225098
+            Min Value: -2.502295732498169
             Value: true
           Axis: X
           Channel Name: intensity
@@ -418,7 +418,7 @@ Visualization Manager:
           Topic: /amcl_pose
           Unreliable: false
           Value: false
-      Enabled: true
+      Enabled: false
       Name: Localization
     - Class: rviz/Group
       Displays:
