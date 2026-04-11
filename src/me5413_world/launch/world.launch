@@ -1,4 +1,7 @@
 <launch>
+    <env name="JACKAL_LASER_TOPIC" value="front/og_scan"/>
+    <env name="JACKAL_LASER_3D_MODEL" value="hdl32e"/>
+
     <!-- Using the simulation clock -->
     <param name="/use_sim_time" value="true"/>
 
@@ -28,6 +31,8 @@
                 -model planar_box 
                 -x 6.0 -y 0.0 -z 3.5" />
     
+    <node name="points_to_scan" pkg="me5413_group9" type="points_to_scan" output="screen"/>
+
     <!-- Load the destination configuration -->
     <rosparam command="load" file="$(find me5413_world)/config/config.yaml" />
 

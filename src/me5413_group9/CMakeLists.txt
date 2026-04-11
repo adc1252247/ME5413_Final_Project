@@ -53,6 +53,10 @@ target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
 add_executable(cv_control src/cv_control.cpp ${COMMON_SOURCES})
 target_link_libraries(cv_control ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
+add_executable(points_to_scan src/points_to_scan.cpp ${COMMON_SOURCES})
+target_link_libraries(points_to_scan ${catkin_LIBRARIES} ${OpenCV_LIBS})
+
+
 
 
 file(GLOB_RECURSE cmake_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cmake")

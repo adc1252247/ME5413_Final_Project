@@ -53,7 +53,7 @@
   <!-- Primary 2D Lidar -->
   <xacro:if value="$(optenv JACKAL_LASER 1)">
     <xacro:property name="mount" value="$(optenv JACKAL_LASER_MOUNT front)" />
-    <xacro:property name="topic" value="$(optenv JACKAL_LASER_TOPIC front/scan)" />
+    <xacro:property name="topic" value="$(optenv JACKAL_LASER_TOPIC front/og_scan)" />
     <xacro:property name="tower" value="$(optenv JACKAL_LASER_TOWER 1)" />
     <xacro:property name="prefix" value="$(optenv JACKAL_LASER_PREFIX ${mount})" />
     <xacro:property name="parent" value="$(optenv JACKAL_LASER_PARENT ${mount}_mount)" />
