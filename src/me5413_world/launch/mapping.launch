@@ -7,15 +7,26 @@
   <!-- <include file="$(find jackal_navigation)/launch/include/gmapping.launch"/> -->
   <include file="$(find me5413_group9)/launch/gmapping.launch"/>
 
-  <!-- Load DWA Local Planner Parameters -->
-  <rosparam command="load" file="$(find me5413_world)/config/dwa_local_planner_params.yaml" />	
-  
-  <!-- Load costmap parameters -->
-  <rosparam command="load" file="$(find me5413_world)/config/local_costmap_params.yaml" />
-  <rosparam command="load" file="$(find me5413_world)/config/global_costmap_params.yaml" />
+  <!-- Test to call the default move base node -->
+  <!-- Single Move Base Instance -->
+  <node pkg="move_base" type="move_base" respawn="true" name="move_base" output="screen">
 
-  <!-- Move Base (navigation) -->
-  <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
+    <!-- Load costmap parameters -->
+    <rosparam file="$(find me5413_world)/config/map_param/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="$(find me5413_world)/config/map_param/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <rosparam file="$(find me5413_world)/config/map_param/local_costmap_params.yaml" command="load" />
+    <rosparam file="$(find me5413_world)/config/map_param/global_costmap_params.yaml" command="load" />
+
+    <!-- Load move_base parameters -->
+    <rosparam file="$(find me5413_world)/config/planners/move_base_params.yaml" command="load" />
+
+    
+
+  </node>
+
+
+  <!-- Move Base (navigation) , not using the provided line to call jackal_navigation move base -->
+  <!-- include file="$(find jackal_navigation)/launch/include/move_base.launch" / -->
 
   <!-- Launch Rviz with our settings -->
   <node type="rviz" name="rviz" pkg="rviz" args="-d $(find me5413_world)/rviz/gmapping.rviz" output="log" respawn="true"/>
