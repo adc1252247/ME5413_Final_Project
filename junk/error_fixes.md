@@ -81,3 +81,9 @@ sudo apt-get install ros-noetic-rviz-imu-plugin
 ```sh
 sudo apt install ros-noetic-hector-gazebo-plugins ros-noetic-velodyne-gazebo-plugins
 ```
+
+RVIZ error
+```sh
+sudo apt install ros-noetic-jsk-rviz-plugins
+
+```
