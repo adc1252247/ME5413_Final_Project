@@ -77,3 +77,7 @@ sudo apt-get install ros-noetic-jackal-navigation
 sudo apt-get install ros-noetic-rviz-imu-plugin
 
 ```
+
+```sh
+sudo apt install ros-noetic-hector-gazebo-plugins ros-noetic-velodyne-gazebo-plugins
+```
