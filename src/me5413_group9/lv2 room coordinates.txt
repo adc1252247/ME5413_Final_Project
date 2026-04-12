@@ -3,6 +3,8 @@
 // move in and out of room "between room face box" and "room wait"
 // move around outside between "room x wait" and "room x wait"
 
+//!! First location to move to after localization is room 3 wait !!
+
 //  room 3 wait
 position: 
         x: 34.62586212158203
