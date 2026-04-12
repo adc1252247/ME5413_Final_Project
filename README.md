@@ -1,4 +1,43 @@
-# ME5413_Final_Project
+# Final Project Overview
+Forked from [NUS-Advanced-Robotics-Centre's ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
+
+**Mapping:** For mapping we used GMapping through `me5413_world mapping.launch`, but with a modified `/front/scan` topic which increased the range of the scan, and showed short features such as the lower ledges in the scene. This was handled with node `me5413_group9 laserscan_from_lidar` which requires that the original `/front/scan` be remapped to something else.
+
+**Box Detection & Counting:** For detecting the numbers on the boxes, we used a combination of OpenCV's feature matching, and Tesseract ORT. This script is at `src/me5413_world/scripts/box_counter_node.py`. It uses templates located under `src/me5413_group9/boxes/cropped`.
+
+You must install Tesseract (in addition to ROS Noetic):
+```sh
+sudo apt update
+sudo apt install -y tesseract-ocr
+
+# Verify
+tesseract --version
+
+pip install -r requirements.txt
+```
+
+Further python libraries are assumed to be available through the installation of ROS Noetic, and as such are not included in the `requirements.txt`:
+| Python import | ROS apt package |
+|---|---|
+| `rospy` | `ros-noetic-rospy` |
+| `tf`, `tf2_ros` | `ros-noetic-tf`, `ros-noetic-tf2-ros` |
+| `actionlib` | `ros-noetic-actionlib` |
+| `cv_bridge` | `ros-noetic-cv-bridge` |
+| `sensor_msgs`, `nav_msgs`, `std_msgs`, `geometry_msgs` | `ros-noetic-common-msgs` |
+| `move_base_msgs` | `ros-noetic-move-base-msgs` |
+| `visualization_msgs` | Part of `common_msgs` |
+
+**Traversing the ramp:** Due to immense slippage, a ...
+
+**Traversing the empty corridor:** The first corridor encountered on the 2nd level is very feature-less, meaning that the AMCL localization really struggles. As such, we use 
+
+## Further dependencies
+**Navigation stack**
+```sh
+sudo apt install -y ros-noetic-navigation ros-noetic-move-base ros-noetic-amcl ros-noetic-map-server ros-noetic-teb-local-planner
+```
+
+# Original Documentation & Instructions
 
 NUS ME5413 Autonomous Mobile Robotics Final Project AY25/26
 > Authors: [Christina](https://github.com/ldaowen), [Ziggy](https://github.com/ziggyhuang), [Dongen](https://github.com/nuslde), and [Shuo](https://github.com/SS47816)
