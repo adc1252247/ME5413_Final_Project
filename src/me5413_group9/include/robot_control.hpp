@@ -2,9 +2,12 @@
 #define ROBOT_CONTROL_H_
 
 #include <cmath>
+#include <stdexcept>
 
 #include <ros/ros.h>
+#include <ros/package.h>
 #include <nav_msgs/Path.h>
+#include <nav_msgs/LoadMap.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -16,6 +19,25 @@
 #include <tf/tf.h>
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+class MapChanger {
+    private:
+        ros::NodeHandle nh;
+        ros::ServiceClient client;
+    
+    public:
+        /// @brief Initialize it
+        MapChanger(const std::string& name="change_map");
+
+        /// @brief Set map using absolute system path
+        /// @throws std::runtime_error if couldn't open
+        void change_map(const std::string& path);
+
+        /// @brief Set map using path from package
+        /// @throws std::runtime_error if couldn't open
+        /// @note path MUST START WITH A '/'
+        void change_map(const std::string& pkg, const std::string& path);
+};
 
 class RobotMover {
     private:
@@ -167,6 +189,44 @@ void clear_cone();
 /// IMPLEMENTATION ////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+/// ====================
+/// === Map Changing ===
+MapChanger::MapChanger(const std::string& name) {
+    client = nh.serviceClient<nav_msgs::LoadMap>(name);
+    client.waitForExistence();
+}
+
+void MapChanger::change_map(const std::string& path) {
+    nav_msgs::LoadMap srv;
+    srv.request.map_url = path;
+
+    if ( client.call(srv) ) {
+        if ( srv.response.result == srv.response.RESULT_SUCCESS ) {
+            ROS_INFO("Map changed to: %s", path.c_str());
+            return;
+        }
+        else {
+            ROS_ERROR("Failed to call change map. Result code: %d", srv.response.result);
+        }
+    }
+    else {
+        ROS_ERROR("Failed to call change_map service");
+    }
+
+    throw std::runtime_error("<MapChanger> couldn't change map!");
+}
+
+void MapChanger::change_map(const std::string& pkg, const std::string& path) {
+    std::string pkg_path = ros::package::getPath(pkg);
+
+    if ( pkg_path.empty() ) {
+        ROS_ERROR("Could not find package '%s'", pkg.c_str());
+        throw std::runtime_error("<MapChanger> unfindable package!");
+    }
+
+    return change_map(pkg_path + path);
+}
+
 /// ===========================
 /// === Path Planning STUFF ===
 RobotMover::RobotMover(const std::string& client, const std::string& frame, float timeout): mbc(client, true), unused(true) {
