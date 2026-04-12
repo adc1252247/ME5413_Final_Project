@@ -1,0 +1,581 @@
+/**
+ * Strategies:
+ *   - Room 1: Go to each corner using move_base, stop and face box to detect when new one is found
+ *   - Outdoors: Wall following
+ *   - Room 2: Go to each partition to check for obstacle, have stop on either side of cylinder too
+ */
+
+#include <ros/ros.h>
+#include <actionlib/client/simple_action_client.h>
+#include <move_base_msgs/MoveBaseAction.h>
+#include <std_srvs/Empty.h>
+#include <nav_msgs/LoadMap.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <geometry_msgs/PoseStamped.h>
+
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+// void switchToLevel(int level) {    
+//     ros::NodeHandle nh;
+    
+//     // Clear costmaps
+//     ros::ServiceClient clear_client = nh.serviceClient<std_srvs::Empty>("/move_base/clear_costmaps");
+//     std_srvs::Empty srv;
+//     clear_client.call(srv);
+//     ROS_INFO("Costmaps cleared");
+    
+//     // Reload map for new level
+//     std::string map_file = "$(find me5413_group9)/maps/lvl" + std::to_string(level) + "_gmapping.yaml";
+    
+//     // Signal AMCL to reload (trigger global localization)
+//     ros::ServiceClient global_loc = nh.serviceClient<std_srvs::Empty>("/global_localization");
+//     global_loc.call(srv);
+//     ROS_INFO("AMCL global localization triggered");
+    
+//     ROS_INFO("Switched to level %d - '%s'", level, map_file.c_str());
+// }
+
+void switchToLevel(int level) {
+    ros::NodeHandle nh;
+    
+    // Kill the old map_server
+    system("rosnode kill /map_server");
+    ros::Duration(0.5).sleep();
+    
+    // Start new map_server with new map file
+    std::string map_path = "/home/ferdi/Documents/ME5413_Final_Project/src/me5413_group9/maps/lvl" + 
+                           std::to_string(level) + "_gmapping.yaml";
+    std::string cmd = "rosrun map_server map_server " + map_path + " &";
+    system(cmd.c_str());
+    ros::Duration(1.0).sleep();
+    
+    // Clear costmaps
+    ros::ServiceClient clear_client = nh.serviceClient<std_srvs::Empty>("/move_base/clear_costmaps");
+    std_srvs::Empty srv;
+    clear_client.call(srv);
+    ROS_INFO("Costmaps cleared");
+    
+    // Trigger AMCL global localization
+    ros::ServiceClient global_loc = nh.serviceClient<std_srvs::Empty>("/global_localization");
+    global_loc.call(srv);
+    ROS_INFO("AMCL global localization triggered");
+};
+
+bool moveToGoal(double x, double y, double z_quat, double w_quat, double timeout = 30.0) {
+    MoveBaseClient ac("move_base", true);
+    
+    // Wait for action server to come up
+    if (!ac.waitForServer(ros::Duration(5.0))) {
+        ROS_ERROR("move_base action server not available!");
+        return false;
+    }
+    
+    move_base_msgs::MoveBaseGoal goal;
+    
+    // Header
+    goal.target_pose.header.frame_id = "map";
+    goal.target_pose.header.stamp = ros::Time::now();
+    
+    // Position
+    goal.target_pose.pose.position.x = x;
+    goal.target_pose.pose.position.y = y;
+    goal.target_pose.pose.position.z = 0.0;
+    
+    // Orientation (quaternion)
+    goal.target_pose.pose.orientation.x = 0.0;
+    goal.target_pose.pose.orientation.y = 0.0;
+    goal.target_pose.pose.orientation.z = z_quat;
+    goal.target_pose.pose.orientation.w = w_quat;
+    
+    ROS_INFO("Sending goal to (%.2f, %.2f)", x, y);
+    ac.sendGoal(goal);
+    
+    // Wait for result
+    bool finished_before_timeout = ac.waitForResult(ros::Duration(timeout));
+    
+    if (finished_before_timeout) {
+        actionlib::SimpleClientGoalState state = ac.getState();
+        if (state == actionlib::SimpleClientGoalState::SUCCEEDED) {
+            ROS_INFO("Goal reached!");
+            return true;
+        } else {
+            ROS_WARN("Goal failed: %s", state.toString().c_str());
+            return false;
+        }
+    } else {
+        ROS_WARN("Goal timed out after %.1f seconds", timeout);
+        ac.cancelGoal();
+        return false;
+    }
+}
+
+void initializeAmcl(double x, double y, double z_quat, double w_quat) {
+    ros::NodeHandle nh;
+    ros::Publisher pose_pub = nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("/initialpose", 1);
+    
+    // Wait for subscriber
+    ros::Duration(0.5).sleep();
+    
+    geometry_msgs::PoseWithCovarianceStamped pose_msg;
+    
+    // Header
+    pose_msg.header.frame_id = "map";
+    pose_msg.header.stamp = ros::Time::now();
+    
+    // Position
+    pose_msg.pose.pose.position.x = x;
+    pose_msg.pose.pose.position.y = y;
+    pose_msg.pose.pose.position.z = 0.0;
+    
+    // Orientation (quaternion)
+    pose_msg.pose.pose.orientation.x = 0.0;
+    pose_msg.pose.pose.orientation.y = 0.0;
+    pose_msg.pose.pose.orientation.z = z_quat;
+    pose_msg.pose.pose.orientation.w = w_quat;
+    
+    // Covariance (36 values)
+    pose_msg.pose.covariance = {
+        0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787
+    };
+    
+    pose_pub.publish(pose_msg);
+    ROS_INFO("AMCL initialized at (%.2f, %.2f)", x, y);
+}
+
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "group9_main");
+    ros::NodeHandle nh;
+    
+    // initializeAmcl(2.386495590209961, 5.6931610107421875, -0.4612403984795658, 0.8872752080445003);
+    // ros::spinOnce();
+
+    // moveToGoal(2.9305427074432373, -3.29251766204834, -0.49092752830359954, 0.871200414344322);
+    // ros::spinOnce();
+
+    // When you detect level change (e.g., from your sensors)
+    switchToLevel(2);
+    
+    return 0;
+}
+
+
+
+/**
+ * // ::: Pose Initialization 0 :::
+ * /initialpose
+ * Is /clock being published?
+ * header: 
+ *   seq: 0
+ *   stamp: 
+ *     secs: 1732
+ *     nsecs: 521000000
+ *   frame_id: "map"
+ * pose: 
+ *   pose: 
+ *     position: 
+ *       x: 2.386495590209961
+ *       y: 5.6931610107421875
+ *       z: 0.0
+ *     orientation: 
+ *       x: 0.0
+ *       y: 0.0
+ *       z: -0.4612403984795658
+ *       w: 0.8872752080445003
+ *   covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+ * ---
+ * 
+ * // ::: Movement 0 :::
+ * /move_base_simple/goal
+ * header: 
+  seq: 0
+  stamp: 
+    secs: 1811
+    nsecs: 514000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 4.537387847900391
+    y: 2.528341770172119
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.4747749438723549
+    w: 0.8801072393015537
+---
+ * // ::: Movement Corners - C. Clockwise Sub-Room 1
+ * 1) header: 
+  seq: 1
+  stamp: 
+    secs: 1839
+    nsecs:  11000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 18.58062744140625
+    y: 10.089950561523438
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.48640184136444226
+    w: 0.8737352280395245
+---
+ * 2) header: 
+  seq: 2
+  stamp: 
+    secs: 1877
+    nsecs: 375000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 22.172653198242188
+    y: 3.834049701690674
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9686993720668705
+    w: 0.24823683561722024
+---
+ * // ::: Movement Doorway - Upper Between Rooms
+ * 1) header: 
+  seq: 3
+  stamp: 
+    secs: 1902
+    nsecs:  31000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 19.34845542907715
+    y: 2.258225440979004
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.49846252459185286
+    w: 0.866911247808861
+---
+ * 2) header: 
+  seq: 4
+  stamp: 
+    secs: 1922
+    nsecs: 734000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 20.73386573791504
+    y: 0.28475475311279297
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.2595057253528059
+    w: 0.9657415692146186
+---
+ * // ::: Movement - C. Clockwise through Sub-room 2
+ * 1) header: 
+  seq: 5
+  stamp: 
+    secs: 1936
+    nsecs: 403000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 23.432252883911133
+    y: 1.7840884923934937
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.5127406840896237
+    w: 0.8585435288203532
+---
+ * 2) header: 
+  seq: 6
+  stamp: 
+    secs: 1954
+    nsecs: 427000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 27.112064361572266
+    y: -4.988246440887451
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9732384270266234
+    w: 0.2297976591672415
+---
+ * 3) header: 
+  seq: 7
+  stamp: 
+    secs: 1979
+    nsecs: 580000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 11.74793815612793
+    y: -13.960494995117188
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.8518338779344058
+    w: 0.5238120315563894
+---
+ * 4) header: 
+  seq: 8
+  stamp: 
+    secs: 2022
+    nsecs: 593000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 8.013261795043945
+    y: -6.77471923828125
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.2607084974466407
+    w: 0.9654175673557608
+---
+ * // ::: 2nd doorway (lower):
+ * 1) header: 
+  seq: 9
+  stamp: 
+    secs: 2044
+    nsecs: 207000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 11.042487144470215
+    y: -5.249324798583984
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.8783494077275181
+    w: 0.47801916064601224
+---
+ * 2) header: 
+  seq: 10
+  stamp: 
+    secs: 2055
+    nsecs: 383000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 9.44726276397705
+    y: -3.10849666595459
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9533787390461144
+    w: 0.301776374050125
+---
+ * // ::: Continuing Original C. Clockwise to "final" corner
+ * 3) header: 
+  seq: 11
+  stamp: 
+    secs: 2077
+    nsecs: 107000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 6.983809947967529
+    y: -4.928114891052246
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.8487638035378238
+    w: 0.5287721681442835
+---
+ * // ::: Getting close to cone
+ * 1) header: 
+  seq: 12
+  stamp: 
+    secs: 2094
+    nsecs: 295000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 5.257331371307373
+    y: -1.346045970916748
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9674026579037677
+    w: 0.25324315880340337
+---
+ * 2) [/cmd_unblock] true
+ * 3) header: 
+  seq: 13
+  stamp: 
+    secs: 2170
+    nsecs: 971000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 2.9305427074432373
+    y: -3.29251766204834
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.49092752830359954
+    w: 0.871200414344322
+---
+
+ */
+
+
+/**
+ * 2nd floor
+ * // ::: 0. Initialize (end of corridor, facing end wall)
+ * header: 
+ seq: 0
+stamp: 
+secs: 2273
+nsecs: 163000000
+frame_id: "map"
+pose: 
+pose: 
+position: 
+    x: 39.08272171020508
+    y: 25.450958251953125
+    z: 0.0
+orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.8964519678197275
+    w: 0.4431409136969169
+covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+---
+* // ::: 1. To middle parting [move_base/simple]
+* -) header: 
+  seq: 0
+  stamp: 
+    secs: 2273
+    nsecs: 163000000
+  frame_id: "map"
+pose: 
+  pose: 
+    position: 
+      x: 39.08272171020508
+      y: 25.450958251953125
+      z: 0.0
+    orientation: 
+      x: 0.0
+      y: 0.0
+      z: 0.8964519678197275
+      w: 0.4431409136969169
+  covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+---
+* ::: 2.a To upper parting
+*  a) header: 
+  seq: 6
+  stamp: 
+    secs: 2409
+    nsecs: 280000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 36.89787292480469
+    y: 19.079458236694336
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9747240086662975
+    w: 0.2234124144480417
+---
+ * ::: 2.b To lower parting
+ * b) header: 
+  seq: 7
+  stamp: 
+    secs: 2422
+    nsecs: 142000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 43.11144256591797
+    y: 11.820858001708984
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.9325402802368989
+    w: 0.36106595759734267
+---
+* ::: 3.a To lower room [To modify - add a "before room" stop to observe for cylinder]
+* i) Facing in
+*  header: 
+  seq: 10
+  stamp: 
+    secs: 2470
+    nsecs: 653000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 38.057044982910156
+    y: 4.121742248535156
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: -0.940712393993518
+    w: 0.33920523549465476
+---
+* ii) Facing box
+* header: 
+  seq: 12
+  stamp: 
+    secs: 2489
+    nsecs: 245000000
+  frame_id: "map"
+pose: 
+  position: 
+    x: 35.139366149902344
+    y: 3.904597282409668
+    z: 0.0
+  orientation: 
+    x: 0.0
+    y: 0.0
+    z: 0.8993385019221851
+    w: 0.43725308342007135
+---
+*/
+
+
+
+/// ::: 1.i) Scan each box...
+
+    /// ::: 1.ii) Move to cone and trigger open
+    // move_to(before_cone);
+    // trigger_cone();
+    // move_to(after_cone);
+
+    /// ::: 1.iii) Outside wall following
+    // move_to(outside_start); // should end facing parallel with wall
+    // follow_outside_wall();  // should end inside 2nd level start
+    // follow_lvl2_wall();     // should end in well-mapped portion of 2nd level
+
+    /// ::: 2.i) Replace map
+
+
+    /// ::: 2.ii) Get past possible obstacles
+    // move_to( possible_cone_1 );
+    // if ( obstructed() )
+    //   move_to( possible_cone_2 );
+    // patient_move_to( room_1 );    // Waits for moving cylinder 
