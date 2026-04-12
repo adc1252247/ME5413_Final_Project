@@ -12,6 +12,7 @@ private:
     ros::Publisher cmd_pub;
 
     // State Logic
+    bool complete    = false;
     bool in_corridor = false;
     int confirmation_counter = 0;
 
@@ -59,7 +60,8 @@ public:
                 cmd_pub.publish(stop_msg);
                 
                 ROS_INFO("Front obstacle detected at target. Shutting down.");
-                ros::shutdown(); 
+                // ros::shutdown();
+                complete = true; 
                 return;
             }
         }
@@ -130,11 +132,24 @@ public:
         }
         cmd_pub.publish(drive_msg);
     }
+
+    void run() {
+        ros::Rate loop_rate(20);
+        
+        while ( ros::ok() ) {
+            ros::spinOnce(); 
+            
+            if ( complete )
+                break;
+
+            loop_rate.sleep();
+        }
+    }
 };
 
-int main(int argc, char** argv) {
-    ros::init(argc, argv, "corridor_navigator_node");
-    OpeningTracker tracker;
-    ros::spin();
-    return 0;
-}
+// int main(int argc, char** argv) {
+//     ros::init(argc, argv, "corridor_navigator_node");
+//     OpeningTracker tracker;
+//     ros::spin();
+//     return 0;
+// }

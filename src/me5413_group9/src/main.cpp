@@ -11,6 +11,9 @@
 
 #include <std_msgs/Bool.h>
 
+#include "phase_2_slope.cpp"
+#include "corridor_navigator.cpp"
+
 // #include <stdexcept>
 
 // #include <tf/tf.h>
@@ -118,9 +121,24 @@ int main(int argc, char** argv) {
     /// @todo - This is the wrong position
     // 15) After cone
     ROS_INFO("Move 15");
-    mover.new_target(2.9305427074432373, -3.29251766204834, -0.49092752830359954, 0.871200414344322);
-    if ( !mover.long_wait() )
-        throw std::runtime_error("Failed to make it to 15");
+    mover.new_target(3.5218276977539062, -4.5353779792785645, -0.47405048895524854, 0.8804976626438538);
+    if ( !mover.wait(ros::Duration(20.0)) ) {
+        ROS_INFO("Did not complete!");
+        mover.cancel();
+    }
+        // throw std::runtime_error("Failed to make it to 15");
+
+    {
+        ROS_INFO("Field Climber...");
+        JackalPotentialField climber;
+        climber.run();
+    }
+
+    {
+        ROS_INFO("Corridor Navigator");
+        OpeningTracker tracker;
+        tracker.run();
+    }
 
     return 0;
 }

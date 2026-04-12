@@ -106,8 +106,8 @@ public:
             if (mission_complete_) {
                 vel_pub_.publish(stop_cmd);
                 ROS_INFO("=== SLOPE COMPLETE: HARD STOP EXECUTED ===");
-                ros::Duration(1.0).sleep(); 
-                ros::shutdown();
+                // ros::Duration(1.0).sleep(); 
+                // ros::shutdown();
                 return;
             }
 
@@ -167,9 +167,9 @@ public:
     }
 };
 
-int main(int argc, char** argv) {
-    ros::init(argc, argv, "jackal_smooth_climb_node");
-    JackalPotentialField climber;
-    climber.run();
-    return 0;
-}
+// int main(int argc, char** argv) {
+//     ros::init(argc, argv, "jackal_smooth_climb_node");
+//     JackalPotentialField climber;
+//     climber.run();
+//     return 0;
+// }
