@@ -350,20 +350,51 @@ void RobotMover::move_to(double x, double y, double z, double w) {
         loop_rate.sleep();
     }
 
+    ros::spinOnce();
+    double last_x = pose.get_x();
+    double last_y = pose.get_y();
+    double last_yaw = pose.get_yaw();
+
+    size_t low_count = 0;
+
     while ( ros::ok() ) {
         ros::spinOnce();
 
-        if ( dist_to_target() < 0.03 || abs(angle_to_target()) < 0.01 ) {
-            ROS_INFO("Stopped moving by proximity!");
-            cancel();
-            break;
-        }
+        double curr_x = pose.get_x();
+        double curr_y = pose.get_y();
+        double curr_yaw = pose.get_yaw();
 
-        else if ( !is_active() ) {
+        double dx = curr_x - last_x;
+        double dy = curr_y - last_y;
+        double dyaw = curr_yaw - last_yaw;
+
+        double dpos = sqrt(dx*dx + dy*dy);
+
+        ROS_INFO("D: %.2f | Yaw: %.2f | Dist: %.2f", dist_to_target(), angle_to_target(), dpos);
+        if ( !is_active() ) {
             ROS_INFO("Stopped moving by controller!");
             break;
         }
+        if ( dist_to_target() < 0.1 && abs(angle_to_target()) < 0.1 ) {
+            ROS_INFO("Stopped moving by proximity! %f - %f", dist_to_target(), angle_to_target());
+            cancel();
+            break;
+        }
+        if ( dpos < 0.03 && abs(dyaw) < 0.03 ) {
+            if ( low_count < 30 )
+                low_count ++;
+            else {
+                ROS_INFO("Stopped moving anywhere!");
+                cancel();
+                break;
+            }
+        }
+        else
+            low_count = 0;
 
+        last_x = curr_x;
+        last_y = curr_y;
+        last_yaw = curr_yaw;
         loop_rate.sleep();
     }
 }
