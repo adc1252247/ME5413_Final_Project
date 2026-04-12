@@ -69,11 +69,18 @@ sudo apt-get install ros-noetic-gazebo-ros-pkgs ros-noetic-gazebo-plugins
 ```
 
 ```sh
-sudo apt-get install ros-noetic-jackal-navigation
+sudo apt-get install ros-noetic-jackal-navigation -y
 
 ```
 
 ```sh
 sudo apt-get install ros-noetic-rviz-imu-plugin
+
+```
+
+```sh
+   sudo apt-get install ros-noetic-velodyne-description ros-noetic-velodyne-gazebo-plugins # Missing points
+
+sudo apt install ros-noetic-hector-gazebo-plugins # Missing IMU
 
 ```
