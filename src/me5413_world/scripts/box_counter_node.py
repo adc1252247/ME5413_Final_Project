@@ -17,11 +17,15 @@ WORLD_SPAWN_X = (-18.0, -2.0)
 WORLD_SPAWN_Y = (-8.0, 8.0)
 
 SWEEP_WAYPOINTS_WORLD = [
-    (-17, -7,  math.pi / 2),
-    (-17,  6,  0),
-    (-5,   6, -math.pi / 2),
-    (-5,  -7,  math.pi),
-    (-15, -10, 0),
+    (-17, -7,  math.pi / 2),   # enter bottom-left
+    (-17,  6,  0),              # up left wall
+    (-13,  6, -math.pi / 2),    # step into Room 1 interior, face south
+    (-13, -6,  0),              # sweep Room 1 down-center, face east
+    (-9,  -6,  math.pi / 2),    # cross partition, face north
+    (-9,   6,  0),              # Room 2 left-center, face east
+    (-5,   6, -math.pi / 2),    # top-right corner
+    (-5,  -7,  math.pi),        # down right wall
+    (-15, -10, 0),              # exit
 ]
 
 
@@ -60,7 +64,7 @@ class BoxCounter:
         # clustering
         self.cluster_eps = 0.3
         self.cluster_min_pts = 3
-        self.box_extent_min = 0.2
+        self.box_extent_min = 0.1
         self.box_extent_max = 1.0
         self.grid_cell = 0.05
 
@@ -233,6 +237,12 @@ class BoxCounter:
             if not (self.spawn_min_x <= px <= self.spawn_max_x and
                     self.spawn_min_y <= py <= self.spawn_max_y):
                 continue
+            # Base/dispenser zone: the U-shaped base structure (pillars + walls)
+            # returns heavy LiDAR that spawned phantom "boxes" (observed at
+            # (5.7,-0.5) and (5.0,1.4)) blocking sub-goal 1 in the local costmap.
+            # Skip the full base rectangle — real task boxes spawn past x=6.5.
+            if 4.5 <= px <= 6.5 and -1.0 <= py <= 2.0:
+                continue
             if self.is_known_wall(px, py):
                 continue
 
@@ -250,9 +260,13 @@ class BoxCounter:
                 lb[0] = (lb[0]*n + px) / (n+1)
                 lb[1] = (lb[1]*n + py) / (n+1)
                 lb[2] = n + 1
+                rospy.loginfo_throttle(2.0,
+                    "LiDAR: merged pt (%.1f,%.1f) -> box #%d (%.1f,%.1f) hits=%d (dist=%.2fm < %.1fm)",
+                    px, py, best_idx, lb[0], lb[1], lb[2], best_dist, self.live_merge_dist)
             else:
                 self.live_boxes.append([px, py, 1])
-                rospy.loginfo("LiDAR: new object (%.1f, %.1f) count=%d", px, py, len(self.live_boxes))
+                rospy.loginfo("LiDAR: new object #%d at (%.1f,%.1f) [total live=%d]",
+                              len(self.live_boxes)-1, px, py, len(self.live_boxes))
 
     # -- clustering --
 
@@ -271,11 +285,12 @@ class BoxCounter:
             mx_ext, mn_ext = max(ext_x, ext_y), min(ext_x, ext_y)
             if not (self.box_extent_min <= mx_ext <= self.box_extent_max):
                 continue
-            if mx_ext > 0.1 and mn_ext / mx_ext < 0.15:
-                continue
+            # Shape filter removed: a single-face box view is a thin line
+            # (ratio ~0.1), which the old filter rejected. Extent bounds above
+            # already constrain size.
             candidates.append((cx, cy, len(cl)))
 
-        merged = self._merge_nearby(candidates, 1.5)
+        merged = self._merge_nearby(candidates, 1.0)
         rospy.loginfo("Clustered %d -> merged %d boxes", len(candidates), len(merged))
         return merged
 
@@ -322,14 +337,21 @@ class BoxCounter:
             used[i] = True
             cx, cy, cnt = candidates[i]
             sx, sy, sn = cx*cnt, cy*cnt, cnt
+            absorbed = []
             for j in range(i+1, len(candidates)):
                 if used[j]:
                     continue
-                if math.hypot(cx - candidates[j][0], cy - candidates[j][1]) < min_dist:
+                d = math.hypot(cx - candidates[j][0], cy - candidates[j][1])
+                if d < min_dist:
                     used[j] = True
                     sx += candidates[j][0]*candidates[j][2]
                     sy += candidates[j][1]*candidates[j][2]
                     sn += candidates[j][2]
+                    absorbed.append((j, candidates[j][0], candidates[j][1], d))
+            if absorbed:
+                for (j, ax, ay, d) in absorbed:
+                    rospy.loginfo("  merge: cand #%d (%.2f,%.2f) <- #%d (%.2f,%.2f) dist=%.2fm",
+                                  i, cx, cy, j, ax, ay, d)
             merged.append([sx/sn, sy/sn])
         return merged
 
@@ -358,7 +380,40 @@ class BoxCounter:
         pose = self.get_robot_pose()
         if pose is None:
             return
-        rx, ry = pose[0], pose[1]
+        rx, ry, ryaw = pose[0], pose[1], pose[2]
+        # Project sighting forward along robot heading: OCR fires when the
+        # digit is centered in the forward-facing camera, so the box is ~2.5m
+        # ahead of the robot, not at the robot. This makes camera_detections
+        # cluster near actual box positions for vote matching.
+        # Snap camera sighting to nearest LiDAR live_box in the forward
+        # hemisphere (within 5m, |rel_angle| <= pi/2). Straight forward-
+        # projection was unreliable when the box was to the side — going
+        # up vs down the same corridor produced sighting positions 5m apart
+        # for the same physical box, breaking dedup. LiDAR live_boxes give
+        # us the actual object location.
+        CAM_MAX_RANGE = 5.0
+        best_b = None
+        best_d = CAM_MAX_RANGE
+        for lb in self.live_boxes:
+            lbx, lby = lb[0], lb[1]
+            dx, dy = lbx - rx, lby - ry
+            d = math.hypot(dx, dy)
+            if d < 0.4 or d > CAM_MAX_RANGE:
+                continue
+            # relative angle of the object w.r.t. robot heading
+            rel = math.atan2(dy, dx) - ryaw
+            rel = math.atan2(math.sin(rel), math.cos(rel))  # wrap to [-pi,pi]
+            if abs(rel) > math.pi / 2:
+                continue  # behind robot
+            if d < best_d:
+                best_d, best_b = d, (lbx, lby)
+        if best_b is None:
+            return  # OCR fired but no LiDAR object forward — treat as noise
+        bx_est, by_est = best_b
+        # Reject snapped position outside spawn area (safety).
+        if not (self.spawn_min_x <= bx_est <= self.spawn_max_x and
+                self.spawn_min_y <= by_est <= self.spawn_max_y):
+            return
 
         frame = self.latest_frame.copy()
         for (x, y, w, h) in self._find_box_regions(frame):
@@ -370,27 +425,27 @@ class BoxCounter:
             if digit is None:
                 continue
 
-            # spatial confirmation
+            # spatial confirmation (uses projected box position, not robot pos)
             matched_key = None
             for k in self.ocr_confirm:
-                if k[0] == digit and math.hypot(rx-k[1], ry-k[2]) < self.ocr_confirm_radius:
+                if k[0] == digit and math.hypot(bx_est-k[1], by_est-k[2]) < self.ocr_confirm_radius:
                     matched_key = k
                     break
             if matched_key:
                 self.ocr_confirm[matched_key] += 1
             else:
-                matched_key = (digit, rx, ry)
+                matched_key = (digit, bx_est, by_est)
                 self.ocr_confirm[matched_key] = 1
             if self.ocr_confirm[matched_key] < self.ocr_confirm_threshold:
                 continue
 
-            # dedup
-            is_dup = any(dd == digit and math.hypot(rx-dx, ry-dy) < self.ocr_dedup_dist
+            # dedup (projected pos)
+            is_dup = any(dd == digit and math.hypot(bx_est-dx, by_est-dy) < self.ocr_dedup_dist
                          for dd, dx, dy in self.camera_detections)
             if not is_dup:
-                self.camera_detections.append((digit, rx, ry))
-                rospy.loginfo("CAMERA: digit %d at (%.1f,%.1f) total=%d",
-                              digit, rx, ry, len(self.camera_detections))
+                self.camera_detections.append((digit, bx_est, by_est))
+                rospy.loginfo("CAMERA: digit %d at ~(%.1f,%.1f) [robot (%.1f,%.1f)] total=%d",
+                              digit, bx_est, by_est, rx, ry, len(self.camera_detections))
 
     @staticmethod
     def _find_box_regions(frame):
@@ -450,20 +505,96 @@ class BoxCounter:
             tmpl_best = max(scores, key=scores.get)
             if tmpl_best == tess_digit:
                 return tess_digit
+            # Disagreement. Tesseract confuses 2<->7 etc. on block digits;
+            # templates are usually more reliable here. Prefer template when
+            # its top is clearly above second-best; reject when both unsure.
             ranked = sorted(scores.values(), reverse=True)
-            if len(ranked) > 1 and ranked[0] - ranked[1] < self.match_margin:
-                return tess_digit
+            if len(ranked) > 1 and ranked[0] - ranked[1] >= self.match_margin:
+                # template is confident and contradicts Tesseract -> trust template
+                return tmpl_best
+            # template is not confident -> reject as ambiguous
             return None
 
         return tess_digit
 
-    # -- navigation --
+    # -- navigation: move_base client + goal helpers --
 
     def _ensure_move_client(self):
         if self.move_client is None:
             self.move_client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
             rospy.loginfo("Waiting for move_base...")
             self.move_client.wait_for_server(rospy.Duration(10.0))
+
+    def _cluster_camera_detections(self, radius=1.5):
+        """Group camera_detections into box-sized clusters by position.
+        Each cluster's digit is the majority vote. Returns list of
+        (cx, cy, digit, votes_dict)."""
+        if not self.camera_detections:
+            return []
+        clusters = []  # each: [sum_x, sum_y, n, votes_dict]
+        for digit, dx, dy in self.camera_detections:
+            best = None
+            best_d = radius
+            for k, cl in enumerate(clusters):
+                cx, cy = cl[0]/cl[2], cl[1]/cl[2]
+                d = math.hypot(dx-cx, dy-cy)
+                if d < best_d:
+                    best_d, best = d, k
+            if best is None:
+                clusters.append([dx, dy, 1, {digit: 1}])
+            else:
+                cl = clusters[best]
+                cl[0] += dx; cl[1] += dy; cl[2] += 1
+                cl[3][digit] = cl[3].get(digit, 0) + 1
+        out = []
+        for cl in clusters:
+            cx, cy = cl[0]/cl[2], cl[1]/cl[2]
+            votes = cl[3]
+            dig = max(votes, key=votes.get)
+            out.append((cx, cy, dig, votes))
+        return out
+
+    def _viewpoint_ok(self, vx, vy, target_xy=None):
+        """Viewpoint is clear if inside spawn area, not on a wall, and not
+        inside any NON-target box's 0.8m footprint. The box we're trying to
+        view is allowed to be within the offset distance (by design)."""
+        if not (self.spawn_min_x <= vx <= self.spawn_max_x and
+                self.spawn_min_y <= vy <= self.spawn_max_y):
+            return False
+        if self.is_known_wall(vx, vy):
+            return False
+        for bx, by in self.box_positions:
+            if target_xy is not None and bx == target_xy[0] and by == target_xy[1]:
+                continue
+            if math.hypot(vx-bx, vy-by) < 0.8:
+                return False
+        return True
+
+    def _compute_viewpoint(self, box_xy, prev_xy, offset=2.0):
+        """Drive-by viewpoint `offset` m short of box_xy along line prev->box.
+        Yaw faces the box. Returns (vx, vy, yaw) or None if no safe spot."""
+        bx, by = box_xy
+        px, py = prev_xy
+        dx, dy = bx - px, by - py
+        dist = math.hypot(dx, dy)
+        if dist < 1e-3:
+            # prev and box coincide; pick arbitrary approach from +x
+            ux, uy = 1.0, 0.0
+        else:
+            ux, uy = dx / dist, dy / dist
+        # nominal: on the line, `offset` m short of box
+        vx, vy = bx - offset * ux, by - offset * uy
+        yaw = math.atan2(by - vy, bx - vx)
+        if self._viewpoint_ok(vx, vy, target_xy=box_xy):
+            return (vx, vy, yaw)
+        # perpendicular offset fallback (both sides)
+        for sign in (+1, -1):
+            vx2 = vx + sign * 0.8 * (-uy)
+            vy2 = vy + sign * 0.8 * ( ux)
+            if self._viewpoint_ok(vx2, vy2, target_xy=box_xy):
+                yaw2 = math.atan2(by - vy2, bx - vx2)
+                return (vx2, vy2, yaw2)
+        return None
 
     def _make_goal(self, x, y, yaw):
         goal = MoveBaseGoal()
@@ -480,24 +611,40 @@ class BoxCounter:
 
     @staticmethod
     def _interpolate_waypoints(waypoints, step=3.0):
+        """Produce dense sub-goals. Every sub-goal's yaw points in the
+        direction of travel (prev -> this), INCLUDING the waypoint endpoints,
+        so TEB never has to pivot at a corner. Only the very final waypoint
+        may keep its authored yaw (for post-sweep pose). This eliminates the
+        90-degree stops that were causing AMCL drift."""
         result = []
+        last_idx = len(waypoints) - 1
         for i in range(len(waypoints)):
             mx, my, myaw = waypoints[i]
             if i == 0:
-                result.append((mx, my, myaw))
+                # first waypoint: yaw in direction of next waypoint if possible
+                if last_idx >= 1:
+                    nx, ny, _ = waypoints[1]
+                    iyaw = math.atan2(ny - my, nx - mx)
+                else:
+                    iyaw = myaw
+                result.append((mx, my, iyaw))
                 continue
             px, py, _ = waypoints[i-1]
             dx, dy = mx - px, my - py
             dist = math.hypot(dx, dy)
+            travel_yaw = math.atan2(dy, dx)
+            endpoint_yaw = myaw if i == last_idx else travel_yaw
             if dist <= step:
-                result.append((mx, my, myaw))
+                result.append((mx, my, endpoint_yaw))
             else:
                 n = int(math.ceil(dist / step))
                 for s in range(1, n+1):
                     t = s / n
-                    iyaw = math.atan2(dy, dx) if s < n else myaw
+                    iyaw = travel_yaw if s < n else endpoint_yaw
                     result.append((px + dx*t, py + dy*t, iyaw))
         return result
+
+    # -- navigation: recovery helpers --
 
     def _clear_costmaps(self):
         try:
@@ -517,20 +664,6 @@ class BoxCounter:
             self.cmd_vel_pub.publish(twist)
             r.sleep()
         self.cmd_vel_pub.publish(Twist())
-
-    def _nearest_obstacle_bearing(self):
-        """Return bearing (rad, robot frame) to closest LiDAR return, or None."""
-        scan = self.latest_scan
-        if scan is None:
-            return None
-        best_r, best_ang = float('inf'), None
-        for i, r in enumerate(scan.ranges):
-            if r < scan.range_min or r > scan.range_max or math.isinf(r) or math.isnan(r):
-                continue
-            if r < best_r:
-                best_r = r
-                best_ang = scan.angle_min + i * scan.angle_increment
-        return best_ang
 
     def _is_recent_stall_nearby(self, x, y, radius=1.0, window_s=15.0):
         now = rospy.Time.now()
@@ -589,11 +722,20 @@ class BoxCounter:
                 return j
         return i + 1
 
+    # -- navigation: sweep + inline inspection --
+
     def sweep_waypoints(self, waypoints, proximity=1.5, timeout_per_wp=8.0):
         self._ensure_move_client()
         rate = rospy.Rate(5)
         sub_goals = self._interpolate_waypoints(waypoints, step=3.0)
         rospy.loginfo("Sweep: %d waypoints -> %d sub-goals", len(waypoints), len(sub_goals))
+
+        # Inline inspection state. Reset each sweep call.
+        self._insp_visited = []            # list of (x,y) we already inspected
+        self._insp_count = 0               # how many inspections done so far
+        self._insp_cap = 6                 # hard cap
+        self._insp_budget = 150.0          # wall-clock seconds total sweep budget
+        self._insp_start = rospy.Time.now()
 
         i = 0
         while i < len(sub_goals):
@@ -661,12 +803,75 @@ class BoxCounter:
                     break
                 rate.sleep()
 
+            # Inline inspection: between sub-goals, check for nearby LiDAR
+            # boxes that have no camera digit yet. Visit up to `_insp_cap` and
+            # stop if wall-clock budget exhausted.
+            cur_pose = self.get_robot_pose()
+            if cur_pose is not None:
+                self._inline_inspect(cur_pose)
+
             if skip_ahead:
                 i = self._next_clear_subgoal(sub_goals, i)
             else:
                 i += 1
 
         self.move_client.cancel_goal()
+
+    def _inline_inspect(self, cur_pose, nearby_radius=4.0, dwell=0.6,
+                        timeout_per_wp=8.0, already_dist=1.5):
+        """Between sub-goals, opportunistically inspect LiDAR boxes near the
+        robot that have no camera digit yet. Budget- and cap-bounded."""
+        if self._insp_count >= self._insp_cap:
+            return
+        elapsed = (rospy.Time.now() - self._insp_start).to_sec()
+        if elapsed > self._insp_budget:
+            return
+        if len(self.new_object_points) < 50:
+            return  # not enough LiDAR yet
+
+        lidar_boxes = self.cluster_boxes()
+        if not lidar_boxes:
+            return
+        camera_boxes = self._cluster_camera_detections(radius=1.5)
+
+        cx, cy = cur_pose[0], cur_pose[1]
+        # Candidates: LiDAR boxes NOT covered by any camera cluster,
+        # NOT already inspected, within nearby_radius of robot.
+        candidates = []
+        for (bx, by) in lidar_boxes:
+            if any(math.hypot(bx-vx, by-vy) < already_dist for (vx, vy) in self._insp_visited):
+                continue
+            if any(math.hypot(bx-ccx, by-ccy) < 2.0 for (ccx, ccy, _, _) in camera_boxes):
+                continue
+            d = math.hypot(bx-cx, by-cy)
+            if d > nearby_radius:
+                continue
+            candidates.append((d, (bx, by)))
+        if not candidates:
+            return
+        candidates.sort(key=lambda t: t[0])
+
+        prev = (cx, cy)
+        remaining_cap = self._insp_cap - self._insp_count
+        for _, b in candidates[:remaining_cap]:
+            if (rospy.Time.now() - self._insp_start).to_sec() > self._insp_budget:
+                rospy.logwarn("  inline-inspect: budget exhausted")
+                break
+            vp = self._compute_viewpoint(b, prev, offset=2.0)
+            if vp is None:
+                rospy.logwarn("  inline-inspect: (%.1f,%.1f) no safe VP", b[0], b[1])
+                self._insp_visited.append(b)  # don't retry
+                continue
+            vx, vy, vyaw = vp
+            rospy.loginfo("  inline-inspect #%d: box (%.1f,%.1f) -> VP (%.1f,%.1f) yaw=%.0f",
+                          self._insp_count+1, b[0], b[1], vx, vy, math.degrees(vyaw))
+            self.move_client.send_goal(self._make_goal(vx, vy, vyaw))
+            self.move_client.wait_for_result(rospy.Duration(timeout_per_wp))
+            self.move_client.cancel_goal()
+            rospy.sleep(dwell)
+            self._insp_visited.append(b)
+            self._insp_count += 1
+            prev = b
 
     # -- rviz markers --
 
@@ -746,29 +951,62 @@ class BoxCounter:
         self.collecting_points = False
         self.ocr_active = False
 
-        rospy.loginfo("Sweep done. LiDAR pts=%d, camera=%d",
-                      len(self.new_object_points), len(self.camera_detections))
+        rospy.loginfo("=" * 60)
+        rospy.loginfo("SWEEP DONE. Raw LiDAR pts=%d | live_boxes=%d | camera sightings=%d",
+                      len(self.new_object_points), len(self.live_boxes), len(self.camera_detections))
+        rospy.loginfo("Live boxes (pre-DBSCAN, live_merge_dist=%.1fm):", self.live_merge_dist)
+        for i, lb in enumerate(self.live_boxes):
+            rospy.loginfo("  live #%d: (%.2f,%.2f) hits=%d", i, lb[0], lb[1], lb[2])
 
         # cluster lidar
         self.box_positions = self.cluster_boxes()
         self.box_digits = [None] * len(self.box_positions)
-        rospy.loginfo("LiDAR: %d box positions", len(self.box_positions))
+        rospy.loginfo("-" * 60)
+        rospy.loginfo("FINAL MERGED BOX COUNT (LiDAR): %d", len(self.box_positions))
+        for i, (bx, by) in enumerate(self.box_positions):
+            rospy.loginfo("  box #%d: (%.2f,%.2f)", i, bx, by)
+        rospy.loginfo("=" * 60)
 
-        # match camera to lidar
-        for digit, rx, ry in self.camera_detections:
-            best_idx, best_dist = None, 5.0
-            for j, (bx, by) in enumerate(self.box_positions):
-                d = math.hypot(rx-bx, ry-by)
-                if d < best_dist:
-                    best_dist, best_idx = d, j
-            if best_idx is not None and self.box_digits[best_idx] is None:
-                self.box_digits[best_idx] = digit
+        # === Camera-first counting ===
+        # Camera sightings are already projected ~2.5m ahead of the robot, so
+        # they cluster near real box centers. Treat each camera-cluster as an
+        # authoritative box with its majority digit. LiDAR clusters that don't
+        # overlap any camera_box are "unknown" and trigger a targeted Pass 2
+        # inspection. Final count = camera_boxes + any inspected-unknowns that
+        # acquire a digit during Pass 2.
+        camera_boxes = self._cluster_camera_detections(radius=1.5)
+        rospy.loginfo("-" * 60)
+        rospy.loginfo("CAMERA BOXES (from sightings, merge=1.5m): %d", len(camera_boxes))
+        for i, (cx, cy, dig, v) in enumerate(camera_boxes):
+            rospy.loginfo("  cam #%d (%.2f,%.2f) digit=%d votes=%s", i, cx, cy, dig, v)
 
-        # report
+        # Find LiDAR-only unknowns: LiDAR clusters not covered by any camera_box.
+        COVER_RADIUS = 2.0
+        unknowns = []
+        for (bx, by) in self.box_positions:
+            covered = any(math.hypot(bx-cx, by-cy) < COVER_RADIUS
+                          for (cx, cy, _, _) in camera_boxes)
+            if not covered:
+                unknowns.append((bx, by))
+        rospy.loginfo("LiDAR-only unknowns (no nearby camera cluster): %d", len(unknowns))
+        for u in unknowns:
+            rospy.loginfo("  unknown (%.2f,%.2f)", u[0], u[1])
+
+        # Post-sweep inspection intentionally removed: unknowns should have
+        # been picked up inline during sweep_waypoints via _inline_inspect().
+        # If any remain here, they're either LiDAR false positives (walls that
+        # passed clustering) or boxes the robot never got close enough to,
+        # which we can't fix post-hoc without another timed pass.
+        if unknowns:
+            rospy.logwarn("Leftover unknowns (LiDAR w/o camera): %d — "
+                          "accepted as uncounted to respect 3-min budget",
+                          len(unknowns))
+
+        # Final counts come from camera_boxes (authoritative).
         self.publish_markers()
         cam_counts = {}
-        for digit, _, _ in self.camera_detections:
-            cam_counts[digit] = cam_counts.get(digit, 0) + 1
+        for (_, _, dig, _) in camera_boxes:
+            cam_counts[dig] = cam_counts.get(dig, 0) + 1
 
         if cam_counts:
             sorted_c = sorted(cam_counts.items())
@@ -786,7 +1024,65 @@ class BoxCounter:
             rospy.logwarn("NO DIGITS DETECTED")
 
         rospy.loginfo("Done. Results on /box_counter/counts")
+
+        # Guarantee arrival at the final waypoint so the next task can begin.
+        # Retries with clear+backup between attempts. Blocks until within 1m
+        # of target or attempt cap reached.
+        end_wx, end_wy, end_wyaw = SWEEP_WAYPOINTS_WORLD[-1]
+        end_x = end_wx + self.offset_x
+        end_y = end_wy + self.offset_y
+        self._return_to_waypoint(end_x, end_y, end_wyaw, proximity=1.0, max_attempts=5)
+
         rospy.spin()
+
+    def _return_to_waypoint(self, x, y, yaw, proximity=1.0, max_attempts=5,
+                            per_attempt_timeout=25.0):
+        """Drive the robot to (x,y,yaw) with retries. Intended as a hard
+        guarantee for task handoff — the next task assumes the robot is here."""
+        rospy.loginfo("=" * 60)
+        rospy.loginfo("RETURN TO END: target (%.1f,%.1f)", x, y)
+        self._ensure_move_client()
+        for attempt in range(1, max_attempts + 1):
+            cur = self.get_robot_pose()
+            if cur is not None and math.hypot(cur[0]-x, cur[1]-y) < proximity:
+                rospy.loginfo("  already within %.1fm of end, done", proximity)
+                return True
+            rospy.loginfo("  attempt %d/%d", attempt, max_attempts)
+            self.move_client.send_goal(self._make_goal(x, y, yaw))
+            start = rospy.Time.now()
+            last_pose = cur
+            last_move = start
+            reached = False
+            while not rospy.is_shutdown():
+                if (rospy.Time.now() - start).to_sec() > per_attempt_timeout:
+                    rospy.logwarn("  attempt %d timeout", attempt)
+                    self.move_client.cancel_goal()
+                    break
+                cur = self.get_robot_pose()
+                if cur is not None:
+                    if math.hypot(cur[0]-x, cur[1]-y) < proximity:
+                        reached = True
+                        break
+                    if last_pose is not None:
+                        if math.hypot(cur[0]-last_pose[0], cur[1]-last_pose[1]) > 0.15:
+                            last_pose, last_move = cur, rospy.Time.now()
+                    if (rospy.Time.now() - last_move).to_sec() > 3.0:
+                        rospy.logwarn("  stalled, clear+backup")
+                        self._escape_stage1()
+                        self._drive(-0.3, 0.0, 1.5)
+                        self.move_client.send_goal(self._make_goal(x, y, yaw))
+                        last_move = rospy.Time.now()
+                state = self.move_client.get_state()
+                if state in [3, 4, 5, 9]:
+                    break
+                rospy.sleep(0.1)
+            if reached:
+                rospy.loginfo("  REACHED end waypoint on attempt %d", attempt)
+                return True
+            self._escape_stage1()
+        rospy.logwarn("RETURN TO END: failed after %d attempts, handing off anyway",
+                      max_attempts)
+        return False
 
 
 if __name__ == '__main__':
