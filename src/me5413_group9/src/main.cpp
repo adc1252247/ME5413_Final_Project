@@ -6,6 +6,7 @@
  * 
  * Intended for me5413_world navigation.launch w/ me5413_group9's lvl1_gmapping
  */
+#include <cstdlib>
 
 #include "robot_control.hpp" // include/robot_control.hpp
 #include "phase_2_slope.cpp"
@@ -16,6 +17,21 @@ const bool running_lvl2 = false;
 int main(int argc, char** argv) {
     ros::init(argc, argv, "group9_main");
     ros::NodeHandle nh;
+
+    ROS_INFO("Starting first script");
+    {
+        int ret = system("rosrun me5413_group9 box_counter.py");
+
+        if ( ret == 0 ) {
+            ROS_INFO("Python script succeeded!");
+        }
+        else {
+            ROS_ERROR("Python script failed!");
+            exit(-1);
+        }
+
+        exit(0);
+    }
 
     RobotMover mover("move_base", "map", 0.5);
     
