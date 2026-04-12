@@ -2,11 +2,27 @@
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
 
     <param name="base_global_planner" type="string" value="navfn/NavfnROS" />
-    <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
+    <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS"/>
     <param name="planner_frequency" value="2.0" />
     <param name="controller_frequency" value="10.0" />
     <param name="conservative_reset_dist" value="3.0" />
     <param name="clearing_rotation_allowed" value="false" />
+    <param name="planner_patience" value="2.0" />
+    <param name="controller_patience" value="2.0" />
+    <param name="oscillation_timeout" value="2.0" />
+    <param name="oscillation_distance" value="0.2" />
+    <param name="max_planning_retries" value="2" />
+    <param name="recovery_behavior_enabled" value="true" />
+
+    <!-- No rotate_recovery: in-box-crowded areas it spins AMCL off its lock. -->
+    <rosparam param="recovery_behaviors">
+      - {name: conservative_clear, type: "clear_costmap_recovery/ClearCostmapRecovery"}
+      - {name: aggressive_clear,   type: "clear_costmap_recovery/ClearCostmapRecovery"}
+    </rosparam>
+    <rosparam>
+      conservative_clear: {reset_distance: 1.5}
+      aggressive_clear:   {reset_distance: 0.0}
+    </rosparam>
 
     <remap from="odom" to="odometry/filtered" />
 
@@ -33,8 +49,8 @@
                min_obstacle_height: -2.0, max_obstacle_height: 2.0}
 
       inflation_layer:
-        inflation_radius: 0.5
-        cost_scaling_factor: 2.5
+        inflation_radius: 0.4
+        cost_scaling_factor: 1.0
     </rosparam>
 
     <!-- Local costmap: rolling window with live obstacles -->
@@ -63,12 +79,12 @@
                min_obstacle_height: -2.0, max_obstacle_height: 2.0}
 
       inflation_layer:
-        inflation_radius: 0.5
-        cost_scaling_factor: 2.5
+        inflation_radius: 0.4
+        cost_scaling_factor: 1.0
     </rosparam>
 
-    <!-- DWA local planner -->
-    <rosparam file="$(find me5413_world)/config/dwa_local_planner_params.yaml" command="load" />
+    <!-- TEB local planner -->
+    <rosparam file="$(find me5413_world)/config/teb_local_planner_params.yaml" command="load" ns="TebLocalPlannerROS" />
 
   </node>
 </launch>

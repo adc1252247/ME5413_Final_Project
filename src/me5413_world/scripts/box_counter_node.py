@@ -86,6 +86,8 @@ class BoxCounter:
         # navigation
         self.move_client = None
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        self.latest_scan = None          # raw LaserScan for escape heading
+        self.recent_stall_xy = []        # (x,y,time) for repeat-stall detection
 
         # frame calibration
         self.offset_x = 0.0
@@ -213,6 +215,7 @@ class BoxCounter:
     # -- lidar scan --
 
     def scan_callback(self, msg):
+        self.latest_scan = msg
         if not self.collecting_points or not self.map_loaded:
             return
         pose = self.get_robot_pose()
@@ -496,23 +499,95 @@ class BoxCounter:
                     result.append((px + dx*t, py + dy*t, iyaw))
         return result
 
-    def _backup_and_clear(self, distance=1.0, speed=0.3):
-        twist = Twist()
-        twist.linear.x = -speed
-        start = rospy.Time.now()
-        r = rospy.Rate(20)
-        while (rospy.Time.now() - start).to_sec() < distance / speed:
-            self.cmd_vel_pub.publish(twist)
-            r.sleep()
-        self.cmd_vel_pub.publish(Twist())
+    def _clear_costmaps(self):
         try:
             from std_srvs.srv import Empty
             rospy.ServiceProxy('/move_base/clear_costmaps', Empty)()
         except Exception:
             pass
+
+    def _drive(self, lin, ang, duration):
+        """Open-loop drive for `duration` seconds."""
+        twist = Twist()
+        twist.linear.x = lin
+        twist.angular.z = ang
+        r = rospy.Rate(20)
+        start = rospy.Time.now()
+        while (rospy.Time.now() - start).to_sec() < duration and not rospy.is_shutdown():
+            self.cmd_vel_pub.publish(twist)
+            r.sleep()
+        self.cmd_vel_pub.publish(Twist())
+
+    def _nearest_obstacle_bearing(self):
+        """Return bearing (rad, robot frame) to closest LiDAR return, or None."""
+        scan = self.latest_scan
+        if scan is None:
+            return None
+        best_r, best_ang = float('inf'), None
+        for i, r in enumerate(scan.ranges):
+            if r < scan.range_min or r > scan.range_max or math.isinf(r) or math.isnan(r):
+                continue
+            if r < best_r:
+                best_r = r
+                best_ang = scan.angle_min + i * scan.angle_increment
+        return best_ang
+
+    def _is_recent_stall_nearby(self, x, y, radius=1.0, window_s=15.0):
+        now = rospy.Time.now()
+        self.recent_stall_xy = [s for s in self.recent_stall_xy
+                                if (now - s[2]).to_sec() < window_s]
+        return any(math.hypot(x-sx, y-sy) < radius for sx, sy, _ in self.recent_stall_xy)
+
+    def _escape_stage1(self):
+        """Fastest escape: cancel, clear, brief wait for replan."""
+        self.move_client.cancel_goal()
+        self._clear_costmaps()
+        rospy.sleep(0.5)
+
+    def _escape_stage2(self):
+        """Longer back-up + double clear. No rotation — AMCL drifts in tight areas."""
+        self.move_client.cancel_goal()
+        self._clear_costmaps()
+        self._drive(-0.3, 0.0, 3.0)   # back up ~0.9 m straight
+        self._clear_costmaps()
         if self.last_good_pose is not None:
-            self._reset_pose(*self.last_good_pose, reason="post-stuck")
+            self._reset_pose(*self.last_good_pose, reason="post-stuck-stage2")
         rospy.sleep(0.3)
+
+    def _segment_clear(self, x0, y0, x1, y1, clearance=0.6):
+        """Straight-line clearance check using static wall mask + live box centroids."""
+        if not self.map_loaded:
+            return True  # can't check, be optimistic
+        dist = math.hypot(x1-x0, y1-y0)
+        if dist < 1e-3:
+            return True
+        step = max(self.map_info.resolution, 0.1)
+        n = int(dist / step) + 1
+        for k in range(1, n+1):
+            t = k / float(n)
+            sx = x0 + (x1-x0)*t
+            sy = y0 + (y1-y0)*t
+            if self.is_known_wall(sx, sy):
+                return False
+            for lb in self.live_boxes:
+                if lb[2] < 3:  # ignore weakly-supported blips
+                    continue
+                if math.hypot(sx-lb[0], sy-lb[1]) < clearance:
+                    return False
+        return True
+
+    def _next_clear_subgoal(self, sub_goals, i, lookahead=3):
+        """Index of next sub-goal with clear LOS from current pose; fallback i+1."""
+        pose = self.get_robot_pose()
+        if pose is None:
+            return i + 1
+        rx, ry, _ = pose
+        upper = min(len(sub_goals), i + 1 + lookahead)
+        for j in range(i + 1, upper):
+            gx, gy, _ = sub_goals[j]
+            if self._segment_clear(rx, ry, gx, gy):
+                return j
+        return i + 1
 
     def sweep_waypoints(self, waypoints, proximity=1.5, timeout_per_wp=8.0):
         self._ensure_move_client()
@@ -520,13 +595,18 @@ class BoxCounter:
         sub_goals = self._interpolate_waypoints(waypoints, step=3.0)
         rospy.loginfo("Sweep: %d waypoints -> %d sub-goals", len(waypoints), len(sub_goals))
 
-        for i, (mx, my, myaw) in enumerate(sub_goals):
+        i = 0
+        while i < len(sub_goals):
             if rospy.is_shutdown():
                 return
+            mx, my, myaw = sub_goals[i]
             if i % 3 == 0 or i == len(sub_goals) - 1:
                 rospy.loginfo("Sub-goal %d/%d (%.1f,%.1f) pts=%d cam=%d",
                               i+1, len(sub_goals), mx, my,
                               len(self.new_object_points), len(self.camera_detections))
+
+            stall_count = 0
+            skip_ahead = False
 
             self.move_client.send_goal(self._make_goal(mx, my, myaw))
             start = rospy.Time.now()
@@ -544,21 +624,47 @@ class BoxCounter:
                     if last_pose is not None:
                         if math.hypot(cur[0]-last_pose[0], cur[1]-last_pose[1]) > 0.15:
                             last_pose, last_move_time = cur, rospy.Time.now()
-                    if (rospy.Time.now() - last_move_time).to_sec() > 2.0:
-                        self.move_client.cancel_goal()
-                        self._backup_and_clear()
-                        rospy.logwarn("Sub-goal %d STUCK, skipping", i+1)
-                        break
+
+                    if (rospy.Time.now() - last_move_time).to_sec() > 1.8:
+                        stall_count += 1
+                        nearby = self._is_recent_stall_nearby(cur[0], cur[1])
+                        self.recent_stall_xy.append((cur[0], cur[1], rospy.Time.now()))
+
+                        if stall_count == 1 and not nearby:
+                            rospy.logwarn("Sub-goal %d stall#1 -> clear+replan", i+1)
+                            self._escape_stage1()
+                            self.move_client.send_goal(self._make_goal(mx, my, myaw))
+                            last_pose, last_move_time = cur, rospy.Time.now()
+                        elif stall_count == 2 or nearby:
+                            rospy.logwarn("Sub-goal %d stall#%d -> backup+rotate",
+                                          i+1, stall_count)
+                            self._escape_stage2()
+                            self.move_client.send_goal(self._make_goal(mx, my, myaw))
+                            last_pose, last_move_time = cur, rospy.Time.now()
+                        else:
+                            rospy.logwarn("Sub-goal %d stall#%d -> skip-ahead",
+                                          i+1, stall_count)
+                            self.move_client.cancel_goal()
+                            skip_ahead = True
+                            break
 
                 if elapsed > timeout_per_wp:
-                    rospy.logwarn("Sub-goal %d TIMEOUT, skipping", i+1)
+                    rospy.logwarn("Sub-goal %d TIMEOUT, skip-ahead", i+1)
+                    self.move_client.cancel_goal()
+                    skip_ahead = True
                     break
+
                 state = self.move_client.get_state()
                 if state in [3, 4, 5, 9]:
                     if state == 4:
-                        self._backup_and_clear()
+                        self._escape_stage1()
                     break
                 rate.sleep()
+
+            if skip_ahead:
+                i = self._next_clear_subgoal(sub_goals, i)
+            else:
+                i += 1
 
         self.move_client.cancel_goal()
 
