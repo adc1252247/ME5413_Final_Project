@@ -1,3 +1,22 @@
+# Running Code
+```sh
+# Assuming project is set up correctly...
+# Starting from this folder
+catkin_make
+
+# Terminal 1
+source devel/setup.bash
+roslaunch me5413_world world.launch
+
+# Terminal 2
+source devel/setup.bash
+roslaunch me5413_world navigation.launch
+
+# Terminal 3
+source devel/setup.bash
+rosrun me5413_group9 main
+```
+
 # ME5413_Final_Project
 
 NUS ME5413 Autonomous Mobile Robotics Final Project AY25/26
