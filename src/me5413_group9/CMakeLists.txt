@@ -47,7 +47,7 @@ include_directories(
 add_executable(laserscan_from_lidar src/laserscan_from_lidar.cpp)
 target_link_libraries(laserscan_from_lidar ${catkin_LIBRARIES})
 
-add_executable(main src/main.cpp)
+add_executable(main src/main.cpp src/common/template_matching.cpp)
 target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 # Phase 2 executable
