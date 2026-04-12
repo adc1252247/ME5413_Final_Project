@@ -42,6 +42,10 @@ include_directories(
 
 
 
+# Transform 3D LIDAR to 2D LaserScan
+add_executable(laserscan_from_lidar src/laserscan_from_lidar.cpp)
+target_link_libraries(laserscan_from_lidar ${catkin_LIBRARIES})
+
 add_executable(main src/main.cpp)
 target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
