@@ -16,25 +16,26 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   visualization_msgs
   tf2
   tf2_ros
   tf2_eigen
   tf2_geometry_msgs
+  actionlib
+  move_base_msgs
 )
 
 find_package(OpenCV REQUIRED)
 
 catkin_package(
   INCLUDE_DIRS include
-  # LIBRARIES me5413_group9
-  CATKIN_DEPENDS cv_bridge roscpp geometry_msgs nav_msgs sensor_msgs std_msgs visualization_msgs
-  # DEPENDS system_lib
+  CATKIN_DEPENDS cv_bridge roscpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs visualization_msgs actionlib move_base_msgs
 )
 
 include_directories(
   include
-  ${catkin_INCLUDE_DIRS},
+  ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 
@@ -50,8 +51,8 @@ set(COMMON_SOURCES
 add_executable(main src/main.cpp ${COMMON_SOURCES})
 target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
-add_executable(cv_control src/cv_control.cpp ${COMMON_SOURCES})
-target_link_libraries(cv_control ${catkin_LIBRARIES} ${OpenCV_LIBS})
+# add_executable(cv_control src/cv_control.cpp ${COMMON_SOURCES})
+# target_link_libraries(cv_control ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(points_to_scan src/points_to_scan.cpp ${COMMON_SOURCES})
 target_link_libraries(points_to_scan ${catkin_LIBRARIES} ${OpenCV_LIBS})

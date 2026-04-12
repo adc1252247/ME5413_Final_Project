@@ -1,92 +1,143 @@
 #include "robot_control.hpp"
 
-#include <ros/ros.h>
-#include <geometry_msgs/Twist.h>
-#include <sensor_msgs/Image.h>
-#include <cv_bridge/cv_bridge.h>
-
-#include <memory>
-
-// =========================== :::::::::::::::::::::::::::::::::::::::::
-// === Variables & Helpers === :::::::::::::::::::::::::::::::::::::::::
-// =========================== :::::::::::::::::::::::::::::::::::::::::
-namespace robot_control {
-    std::unique_ptr<ros::NodeHandle> nh;
+/// ===========================
+/// === Path Planning STUFF ===
+RobotMover::RobotMover(const std::string& client, const std::string& frame, float timeout): mbc(client, true), unused(true) {
+    if ( !mbc.waitForServer(ros::Duration(timeout)) ) {
+        ROS_ERROR("<Mover> move_base action not available on '%s' [%s] (%.2f second timeout)", client.c_str(), frame.c_str(), timeout);
+        throw std::runtime_error("<Mover> move_base action server not available!");
+    }
     
-    ros::Subscriber            image_sub;
-    cv_bridge::CvImageConstPtr latest_image;
+    goal.target_pose.header.frame_id = frame;
+    // goal.target_pose.header.stamp    = ros::Time::now();
 
-    ros::Timer           twist_timer;
-    ros::Publisher       twist_pub;
-    bool                 stop_twist = true;
-    geometry_msgs::Twist next_twist;
+    goal.target_pose.pose.position.z = 0.0;
 
-    void init();
-    
-    void set_twist(double lin, double ang);
+    goal.target_pose.pose.orientation.x = 0.0;
+    goal.target_pose.pose.orientation.y = 0.0;
 }
 
-// ================= :::::::::::::::::::::::::::::::::::::::::::::::::::
-// === Callbacks === :::::::::::::::::::::::::::::::::::::::::::::::::::
-// ================= :::::::::::::::::::::::::::::::::::::::::::::::::::
-void image_callback(const sensor_msgs::ImageConstPtr& msg) {
-    robot_control::latest_image = cv_bridge::toCvShare(msg, "bgr8");
-}
-
-void send_twist_callback(const ros::TimerEvent& event) {
-    if ( !robot_control::stop_twist )
-        robot_control::twist_pub.publish(robot_control::next_twist);
-}
-
-// ======================= :::::::::::::::::::::::::::::::::::::::::::::
-// === Implementations === :::::::::::::::::::::::::::::::::::::::::::::
-// ======================= :::::::::::::::::::::::::::::::::::::::::::::
-void robot_control::init() {
-    nh = std::unique_ptr<ros::NodeHandle>(new ros::NodeHandle());
-
-    image_sub = nh->subscribe("/front/image_raw", 1, image_callback);
-
-    twist_pub   = nh->advertise<geometry_msgs::Twist>("/cmd_vel", 1);
-    twist_timer = nh->createTimer(ros::Duration(0.05), send_twist_callback);
-}
-
-void robot_control::set_twist(double lin, double ang) {
-    geometry_msgs::Twist temp;
-
-    temp.linear.x = lin;
-    temp.linear.y = 0;
-    temp.linear.z = 0;
-    temp.angular.x = 0;
-    temp.angular.y = 0;
-    temp.angular.z = ang;
-    
-    next_twist = temp;
-
-    stop_twist = (lin == 0.0) && (ang == 0.0);
-}
-
-void robot_control_init() {
-    robot_control::init();
-}
-
-void manual::set_fwd(double vel) {
-    robot_control::set_twist(vel, 0);
-}
-
-void manual::release() {
-    robot_control::set_twist(0, 0);
-}
-
-void manual::set_ang(double vel) {
-    robot_control::set_twist(0, vel);
-}
-
-const cv::Mat& sensors::get_image() {
-    if ( !robot_control::latest_image ) {
-        static cv::Mat empty;
-        return empty;
+void RobotMover::new_target(double x, double y, double z, double w){
+    if ( mbc.getState() == GoalState::ACTIVE ) {
+        ROS_WARN("Overriding move to (%.2f, %.2f)", target_x(), target_y());
+        mbc.cancelGoal();
     }
 
-    return robot_control::latest_image->image;
+    goal.target_pose.header.stamp = ros::Time::now();
+
+    goal.target_pose.pose.position.x = x;
+    goal.target_pose.pose.position.y = y;
+
+    goal.target_pose.pose.orientation.z = z;
+    goal.target_pose.pose.orientation.w = w;
+
+    mbc.sendGoal(goal);
 }
 
+void RobotMover::new_target(double x, double y, double a){
+    tf::Quaternion q = tf::createQuaternionFromYaw(a);
+    new_target(x, y, q.getZ(), q.getW());
+}
+
+void RobotMover::cancel(){
+    if ( mbc.getState() == GoalState::ACTIVE ) {
+        mbc.cancelGoal();
+    }
+}
+
+bool RobotMover::wait(ros::Duration timeout) {
+    if ( mbc.getState() == GoalState::ACTIVE
+      || mbc.getState() == GoalState::PENDING )
+        return mbc.waitForResult(timeout);
+    else
+        return true;
+}
+
+bool RobotMover::long_wait() {
+    if ( mbc.getState() == GoalState::ACTIVE 
+      || mbc.getState() == GoalState::PENDING )
+        return mbc.waitForResult();
+    else
+        return true;
+}
+
+
+double RobotMover::target_x() const {
+    return goal.target_pose.pose.position.x;
+
+}
+
+double RobotMover::target_y() const {
+    return goal.target_pose.pose.position.y;
+
+}
+
+double RobotMover::target_z() const {
+    return goal.target_pose.pose.orientation.z;
+}
+
+double RobotMover::target_w() const {
+    return goal.target_pose.pose.orientation.w;
+
+}
+
+double RobotMover::target_yaw() const {
+    tf::Quaternion q(0, 0, target_z(), target_w());
+    return tf::getYaw(q);
+}
+
+bool RobotMover::is_active() const {
+    return mbc.getState() == GoalState::ACTIVE;
+}
+
+ros::Time RobotMover::requested_time() const {
+    return goal.target_pose.header.stamp;
+}
+
+
+
+/// ==================
+/// === AMCL STUFF ===
+void set_amcl_estimate(double x, double y, double z, double w, const std::string& frame_id, const std::string& pose_topic) {
+    ros::NodeHandle nh;
+    ros::Publisher pose_pub = nh.advertise<geometry_msgs::PoseWithCovarianceStamped>(pose_topic, 1);
+
+    ros::Duration(0.5).sleep();
+
+    geometry_msgs::PoseWithCovarianceStamped pose_msg;
+
+    pose_msg.header.frame_id = frame_id;
+    pose_msg.header.stamp = ros::Time::now();
+
+    pose_msg.pose.pose.position.x = x;
+    pose_msg.pose.pose.position.y = y;
+    pose_msg.pose.pose.position.z = 0;
+
+    pose_msg.pose.pose.orientation.x = 0;
+    pose_msg.pose.pose.orientation.y = 0;
+    pose_msg.pose.pose.orientation.z = z;
+    pose_msg.pose.pose.orientation.w = w;
+
+    /// @todo - Check that this is good for all, not just level 1 init.
+    pose_msg.pose.covariance = {
+        0.25, 0,    0, 0, 0, 0,
+        0,    0.25, 0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0.06853892326654787
+    };
+
+    pose_pub.publish(pose_msg);
+    ROS_INFO("AMCL initialized to map position (%.2f. %.2f)", x, y);
+}
+
+// ============
+// === Cone ===
+void clear_cone() {
+    ros::NodeHandle nh;
+    ros::Publisher pub = nh.advertise<std_msgs::Bool>("/cmd_unblock", 1);
+    std_msgs::Bool msg;
+    msg.data = true;
+    pub.publish(msg);
+}
