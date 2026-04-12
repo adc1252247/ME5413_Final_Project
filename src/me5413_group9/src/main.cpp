@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     /// Go to reliable start-position for Brian's portion
     ROS_INFO("Exiting Level 1...");
     mover.new_target(3.5218276977539062, -4.5353779792785645, -0.47405048895524854, 0.8804976626438538);
-    if ( !mover.wait(ros::Duration(20.0)) ) {
+    if ( !mover.wait(ros::Duration(25.0)) ) {
         ROS_INFO("Did not complete!");
         mover.cancel();
     }
@@ -44,5 +44,19 @@ int main(int argc, char** argv) {
         ROS_INFO("Corridor Navigator");
         OpeningTracker tracker;
         tracker.run();
+    }
+
+    /// ::: Reset map to level 2
+    {
+        MapChanger mc;
+        mc.change_map("me5413_world", "/maps/lvl2_gmapping.yaml");
+
+        ROS_INFO("Zeroing in on level 2 map!");
+
+        set_amcl_estimate(38.801937103271484, 25.503082275390625, 0.8795368586003314, 0.4758307623130945);
+        ros::spinOnce();
+
+        mover.new_target(36.76942825317383, 23.973785400390625, -0.4538629410501477, 0.891071507086446);
+        mover.wait(ros::Duration(20.0));
     }
 }
