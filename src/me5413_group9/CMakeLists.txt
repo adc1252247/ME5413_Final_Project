@@ -37,6 +37,7 @@ include_directories(
   include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${TESSERACT_INCLUDE_DIRS}
 )
 
 
@@ -56,6 +57,9 @@ target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(points_to_scan src/points_to_scan.cpp ${COMMON_SOURCES})
 target_link_libraries(points_to_scan ${catkin_LIBRARIES} ${OpenCV_LIBS})
+
+add_executable(reader src/reader.cpp ${COMMON_SOURCES})
+target_link_libraries(reader ${catkin_LIBRARIES} ${OpenCV_LIBS} lept tesseract)
 
 
 
