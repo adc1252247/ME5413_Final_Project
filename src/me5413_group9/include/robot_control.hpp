@@ -1,39 +1,311 @@
-/**
- * A set of functions intended to control the velocity of the robot.
- * 
- * Units are metric:
- * - Distances in [meters]
- * - Angles in [radians]
- */
-#ifndef GROUP_9_ROBOT_CONTROL_H_
-#define GROUP_9_ROBOT_CONTROL_H_
+#ifndef ROBOT_CONTROL_H_
+#define ROBOT_CONTROL_H_
 
-#include "opencv2/core/mat.hpp"
+#include <cmath>
 
-void robot_control_init();
+#include <ros/ros.h>
+#include <nav_msgs/Path.h>
+#include <nav_msgs/Odometry.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <std_msgs/Bool.h>
 
-namespace manual {
-    bool is_manual();
+#include <actionlib/client/simple_action_client.h>
+#include <move_base_msgs/MoveBaseAction.h>
 
-    void release();
+#include <tf/tf.h>
 
-    void set_fwd(double vel);
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
-    void set_ang(double vel);
+class RobotMover {
+    private:
+        MoveBaseClient               mbc;
+        move_base_msgs::MoveBaseGoal goal;
+        bool                         unused;
 
-    void set_arc(double vel, double r);
+    public:
+        /// @brief GoalState enum
+        ///   Notable Fields
+        /// SUCCEEDED
+        /// ACTIVE
+        /// PENDING || PREEMPTED
+        /// RECALLED || REJECTED || ABORTED || LOST
+        using GoalState = actionlib::SimpleClientGoalState;
 
-    double get_fwd();
+    public:
+        /// @brief Initialize the Mover action client
+        /// @param client  Name of client
+        /// @param frame   Name of frame
+        /// @param timeout Initial connection timeout
+        RobotMover(const std::string& client="move_base", const std::string& frame="map", float timeout=0.5);
 
-    double get_ang();
+    public:
+        /// @brief Move to a new target pose
+        /// @param x X-position in map
+        /// @param y Y-position in map
+        /// @param z Z-component of quaterion
+        /// @param w W-component of quaternion
+        void new_target(double x, double y, double z, double w);
 
-    double get_arc();    
+        /// @brief Move to a new target pose
+        /// @param x X-position in map
+        /// @param y Y-position in map
+        /// @param a Yaw-angle in map
+        void new_target(double x, double y, double a);
+
+        /// @brief Cancel the last move
+        void cancel();
+
+        /// @brief Wait for completion, or until timeout
+        bool wait(ros::Duration timeout);
+
+        /// @brief Wait for completion
+        bool long_wait();
+
+    public:
+        /// @brief Getter X-position of target
+        double target_x() const;
+
+        /// @brief Getter Y-position of target
+        double target_y() const;
+
+        /// @brief Getter Z-component of target quaternion
+        double target_z() const;
+
+        /// @brief Getter W-component of target quaterinion
+        double target_w() const;
+
+        /// @brief Getter yaw of target
+        double target_yaw() const;
+
+        /// @brief Check if move currently in progress
+        bool is_active() const;
+
+        /// @brief Getter time of request
+        ros::Time requested_time() const;
+};
+
+class RobotPlan {
+    private:
+        ros::NodeHandle nh;
+        ros::Subscriber sub;
+        nav_msgs::Path  path;
+
+    public:
+        /// @brief Set up subscription to get path of robot
+        RobotPlan(const std::string& topic);
+
+        /// @brief Populate the path
+        void callback(const nav_msgs::Path::ConstPtr& msg);
+
+        /// @brief Compute the minimum distance for traveling this path
+        /// @param x Current x position
+        /// @param y Current y position
+        double distance_to_target(double x, double y);
+
+        /// @brief Raw access to the path
+        const nav_msgs::Path& get_path() const;
+};
+
+/// @brief 
+class RobotPose {
+    private:
+        ros::NodeHandle nh;
+        ros::Subscriber sub;
+        geometry_msgs::PoseStamped pose;
+
+    public:
+        /// @brief Set up subsription to get pose of robot
+        RobotPose(const std::string& topic);
+
+        /// @brief Populate the pose
+        void callback(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+        double get_x() const;
+
+        double get_y() const;
+
+        double get_z() const;
+
+        double get_w() const;
+
+        double get_yaw() const;
+
+};
+
+class RobotOdometry {
+    private:
+        ros::NodeHandle nh;
+        ros::Subscriber sub;
+        nav_msgs::Odometry odom;
+
+    public:
+        RobotOdometry(const std::string& topic="/odom");
+
+        void callback(const nav_msgs::Odometry::ConstPtr& msg);
+
+        double get_speed() const;
+
+        double get_vx() const;
+
+        double get_vy() const;
+
+        double get_w() const;
+};
+
+/// @brief Replace the map used by AMCL
+void replace_amcl_map(const std::string& map_name);
+
+/// @brief Set an initial estimate for the AMCL map localization
+void set_amcl_estimate(double x, double y, double z, double w, const std::string& frame_id="map", const std::string& pose_topic="/initialpose");
+
+void clear_cone();
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+/// IMPLEMENTATION ////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+/// ===========================
+/// === Path Planning STUFF ===
+RobotMover::RobotMover(const std::string& client, const std::string& frame, float timeout): mbc(client, true), unused(true) {
+    if ( !mbc.waitForServer(ros::Duration(timeout)) ) {
+        ROS_ERROR("<Mover> move_base action not available on '%s' [%s] (%.2f second timeout)", client.c_str(), frame.c_str(), timeout);
+        throw std::runtime_error("<Mover> move_base action server not available!");
+    }
+    
+    goal.target_pose.header.frame_id = frame;
+    // goal.target_pose.header.stamp    = ros::Time::now();
+
+    goal.target_pose.pose.position.z = 0.0;
+
+    goal.target_pose.pose.orientation.x = 0.0;
+    goal.target_pose.pose.orientation.y = 0.0;
 }
 
-namespace sensors {
-    const cv::Mat& get_image();
+void RobotMover::new_target(double x, double y, double z, double w){
+    if ( mbc.getState() == GoalState::ACTIVE ) {
+        ROS_WARN("Overriding move to (%.2f, %.2f)", target_x(), target_y());
+        mbc.cancelGoal();
+    }
 
-    double get_imu_fwd();
+    goal.target_pose.header.stamp = ros::Time::now();
+
+    goal.target_pose.pose.position.x = x;
+    goal.target_pose.pose.position.y = y;
+
+    goal.target_pose.pose.orientation.z = z;
+    goal.target_pose.pose.orientation.w = w;
+
+    mbc.sendGoal(goal);
 }
 
-#endif // ...
+void RobotMover::new_target(double x, double y, double a){
+    tf::Quaternion q = tf::createQuaternionFromYaw(a);
+    new_target(x, y, q.getZ(), q.getW());
+}
+
+void RobotMover::cancel(){
+    if ( mbc.getState() == GoalState::ACTIVE ) {
+        mbc.cancelGoal();
+    }
+}
+
+bool RobotMover::wait(ros::Duration timeout) {
+    if ( mbc.getState() == GoalState::ACTIVE
+      || mbc.getState() == GoalState::PENDING )
+        return mbc.waitForResult(timeout);
+    else
+        return true;
+}
+
+bool RobotMover::long_wait() {
+    if ( mbc.getState() == GoalState::ACTIVE 
+      || mbc.getState() == GoalState::PENDING )
+        return mbc.waitForResult();
+    else
+        return true;
+}
+
+
+double RobotMover::target_x() const {
+    return goal.target_pose.pose.position.x;
+
+}
+
+double RobotMover::target_y() const {
+    return goal.target_pose.pose.position.y;
+
+}
+
+double RobotMover::target_z() const {
+    return goal.target_pose.pose.orientation.z;
+}
+
+double RobotMover::target_w() const {
+    return goal.target_pose.pose.orientation.w;
+
+}
+
+double RobotMover::target_yaw() const {
+    tf::Quaternion q(0, 0, target_z(), target_w());
+    return tf::getYaw(q);
+}
+
+bool RobotMover::is_active() const {
+    return mbc.getState() == GoalState::ACTIVE;
+}
+
+ros::Time RobotMover::requested_time() const {
+    return goal.target_pose.header.stamp;
+}
+
+
+
+/// ==================
+/// === AMCL STUFF ===
+void set_amcl_estimate(double x, double y, double z, double w, const std::string& frame_id, const std::string& pose_topic) {
+    ros::NodeHandle nh;
+    ros::Publisher pose_pub = nh.advertise<geometry_msgs::PoseWithCovarianceStamped>(pose_topic, 1);
+
+    ros::Duration(0.5).sleep();
+
+    geometry_msgs::PoseWithCovarianceStamped pose_msg;
+
+    pose_msg.header.frame_id = frame_id;
+    pose_msg.header.stamp = ros::Time::now();
+
+    pose_msg.pose.pose.position.x = x;
+    pose_msg.pose.pose.position.y = y;
+    pose_msg.pose.pose.position.z = 0;
+
+    pose_msg.pose.pose.orientation.x = 0;
+    pose_msg.pose.pose.orientation.y = 0;
+    pose_msg.pose.pose.orientation.z = z;
+    pose_msg.pose.pose.orientation.w = w;
+
+    /// @todo - Check that this is good for all, not just level 1 init.
+    pose_msg.pose.covariance = {
+        0.25, 0,    0, 0, 0, 0,
+        0,    0.25, 0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0,
+        0,    0,    0, 0, 0, 0.06853892326654787
+    };
+
+    pose_pub.publish(pose_msg);
+    ROS_INFO("AMCL initialized to map position (%.2f. %.2f)", x, y);
+}
+
+// ============
+// === Cone ===
+void clear_cone() {
+    ros::NodeHandle nh;
+    ros::Publisher pub = nh.advertise<std_msgs::Bool>("/cmd_unblock", 1);
+    std_msgs::Bool msg;
+    msg.data = true;
+    pub.publish(msg);
+}
+#endif // ROBOT_CONTROL_H_
