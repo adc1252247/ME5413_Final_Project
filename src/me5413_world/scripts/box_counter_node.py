@@ -1,0 +1,690 @@
+#!/usr/bin/env python3
+import math, os
+import rospy, cv2, numpy as np, pytesseract
+import tf2_ros, actionlib
+from sensor_msgs.msg import LaserScan, Image
+from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
+from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from visualization_msgs.msg import Marker, MarkerArray
+from cv_bridge import CvBridge
+from tf.transformations import quaternion_from_euler
+
+BOX_SIZE = 0.8
+MIN_BOX_SPACING = 1.5
+WORLD_SPAWN_X = (-18.0, -2.0)
+WORLD_SPAWN_Y = (-8.0, 8.0)
+
+SWEEP_WAYPOINTS_WORLD = [
+    (-17, -7,  math.pi / 2),
+    (-17,  6,  0),
+    (-5,   6, -math.pi / 2),
+    (-5,  -7,  math.pi),
+    (-15, -10, 0),
+]
+
+
+class BoxCounter:
+    def __init__(self):
+        rospy.init_node('box_counter_node')
+        self.bridge = CvBridge()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
+        # map baseline
+        self.wall_mask = None
+        self.map_info = None
+        self.map_loaded = False
+        self.wall_buffer_m = 0.15
+
+        # lidar point accumulation
+        self.new_object_points = []
+        self.collecting_points = False
+        self.live_boxes = []
+        self.live_merge_dist = 2.0
+
+        # detected boxes
+        self.box_positions = []
+        self.box_digits = []
+
+        # camera detections
+        self.camera_detections = []
+        self.ocr_dedup_dist = 3.5
+        self.ocr_confirm = {}
+        self.ocr_confirm_radius = 2.0
+        self.ocr_confirm_threshold = 3
+        self.ocr_active = False
+        self.last_ocr_time = None
+
+        # clustering
+        self.cluster_eps = 0.3
+        self.cluster_min_pts = 3
+        self.box_extent_min = 0.2
+        self.box_extent_max = 1.0
+        self.grid_cell = 0.05
+
+        # digit detection
+        self.latest_frame = None
+        self.match_threshold = 0.35
+        self.match_margin = 0.03
+        self.templates = {}
+        self.template_scales = [0.2, 0.3, 0.4, 0.5, 0.6]
+        self._load_templates()
+
+        # amcl drift detection
+        self.last_good_pose = None
+        self.last_pose_time = None
+        self.pose_jump_threshold = 1.0
+        self.amcl_cov_threshold = 0.5
+        self.amcl_covariance = None
+        self.initial_pose_pub = rospy.Publisher(
+            '/initialpose', PoseWithCovarianceStamped, queue_size=1)
+        rospy.Subscriber('/amcl_pose', PoseWithCovarianceStamped,
+                         self._amcl_pose_cb, queue_size=1)
+
+        # navigation
+        self.move_client = None
+        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+        # frame calibration
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.spawn_min_x = self.spawn_max_x = 0.0
+        self.spawn_min_y = self.spawn_max_y = 0.0
+
+        # publishers
+        self.count_pub = rospy.Publisher('/box_counter/counts', String, queue_size=10, latch=True)
+        self.marker_pub = rospy.Publisher('/box_counter/box_markers', MarkerArray, queue_size=10, latch=True)
+        self.debug_img_pub = rospy.Publisher('/box_counter/debug_image', Image, queue_size=1)
+
+        # subscribers
+        rospy.Subscriber('/front/scan', LaserScan, self.scan_callback, queue_size=1)
+        rospy.Subscriber('/front/image_raw', Image, self.image_callback,
+                         queue_size=1, buff_size=2**24)
+        rospy.Subscriber('/map', OccupancyGrid, self.map_callback, queue_size=1)
+        rospy.loginfo("Box Counter Node started")
+
+    # -- templates --
+
+    def _load_templates(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        tdir = os.path.normpath(os.path.join(script_dir, '..', '..', 'me5413_group9', 'boxes', 'cropped'))
+        for d in range(1, 10):
+            img = cv2.imread(os.path.join(tdir, 'img{}.png'.format(d)), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+            self.templates[d] = [cv2.resize(img, (int(img.shape[1]*s), int(img.shape[0]*s)))
+                                 for s in self.template_scales
+                                 if int(img.shape[1]*s) >= 15 and int(img.shape[0]*s) >= 15]
+        rospy.loginfo("Loaded %d digit templates from %s", len(self.templates), tdir)
+
+    # -- map --
+
+    def map_callback(self, msg):
+        if self.map_loaded:
+            return
+        raw = np.array(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width))
+        occupied = ((raw > 50) | (raw < 0)).astype(np.uint8)
+        buf_px = max(1, int(self.wall_buffer_m / msg.info.resolution))
+        kernel = np.ones((2*buf_px+1, 2*buf_px+1), np.uint8)
+        self.wall_mask = cv2.dilate(occupied, kernel, iterations=1)
+        self.map_info = msg.info
+        self.map_loaded = True
+        rospy.loginfo("Map loaded: %dx%d res=%.3f", msg.info.width, msg.info.height, msg.info.resolution)
+
+    def is_known_wall(self, mx, my):
+        if not self.map_loaded:
+            return False
+        info = self.map_info
+        px = int((mx - info.origin.position.x) / info.resolution)
+        py = int((my - info.origin.position.y) / info.resolution)
+        if px < 0 or px >= info.width or py < 0 or py >= info.height:
+            return True
+        return self.wall_mask[py, px] > 0
+
+    # -- pose & amcl --
+
+    def get_robot_pose(self):
+        try:
+            t = self.tf_buffer.lookup_transform('map', 'base_link', rospy.Time(0), rospy.Duration(0.5))
+            x, y = t.transform.translation.x, t.transform.translation.y
+            q = t.transform.rotation
+            yaw = math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z))
+            return x, y, yaw
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            return None
+
+    def _amcl_pose_cb(self, msg):
+        cov = msg.pose.covariance
+        self.amcl_covariance = (cov[0], cov[7], cov[35])
+
+    def _reset_pose(self, x, y, yaw, reason):
+        rospy.logwarn("AMCL RESET (%s): (%.1f, %.1f, %.0f deg)", reason, x, y, math.degrees(yaw))
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = rospy.Time.now()
+        msg.pose.pose.position.x = x
+        msg.pose.pose.position.y = y
+        q = quaternion_from_euler(0, 0, yaw)
+        msg.pose.pose.orientation.x, msg.pose.pose.orientation.y = q[0], q[1]
+        msg.pose.pose.orientation.z, msg.pose.pose.orientation.w = q[2], q[3]
+        msg.pose.covariance[0] = 0.1
+        msg.pose.covariance[7] = 0.1
+        msg.pose.covariance[35] = 0.05
+        self.initial_pose_pub.publish(msg)
+        try:
+            from std_srvs.srv import Empty
+            rospy.ServiceProxy('/move_base/clear_costmaps', Empty)()
+        except Exception:
+            pass
+        rospy.sleep(0.5)
+
+    def check_amcl_drift(self):
+        pose = self.get_robot_pose()
+        if pose is None:
+            if self.last_good_pose is not None:
+                self._reset_pose(*self.last_good_pose, reason="TF failed")
+            return
+        now = rospy.Time.now()
+        x, y, yaw = pose
+
+        if self.amcl_covariance is not None:
+            cxx, cyy, cyaw = self.amcl_covariance
+            if math.isnan(cxx) or math.isnan(cyy) or math.isnan(cyaw) or \
+                    cxx > self.amcl_cov_threshold or cyy > self.amcl_cov_threshold:
+                if self.last_good_pose is not None:
+                    self._reset_pose(*self.last_good_pose, reason="cov blowup")
+                    self.amcl_covariance = None
+                return
+
+        if self.last_good_pose is not None and self.last_pose_time is not None:
+            dt = (now - self.last_pose_time).to_sec()
+            if dt < 0.1:
+                return
+            jump = math.hypot(x - self.last_good_pose[0], y - self.last_good_pose[1])
+            if jump > max(2.0 * dt, self.pose_jump_threshold):
+                self._reset_pose(*self.last_good_pose, reason="jump %.2fm" % jump)
+                return
+
+        self.last_good_pose = (x, y, yaw)
+        self.last_pose_time = now
+
+    # -- lidar scan --
+
+    def scan_callback(self, msg):
+        if not self.collecting_points or not self.map_loaded:
+            return
+        pose = self.get_robot_pose()
+        if pose is None:
+            return
+        rx, ry, ryaw = pose
+
+        for i, r in enumerate(msg.ranges):
+            if r < 0.3 or r > 6.0 or r < msg.range_min or r > msg.range_max or math.isinf(r):
+                continue
+            angle = msg.angle_min + i * msg.angle_increment + ryaw
+            px = rx + r * math.cos(angle)
+            py = ry + r * math.sin(angle)
+
+            if not (self.spawn_min_x <= px <= self.spawn_max_x and
+                    self.spawn_min_y <= py <= self.spawn_max_y):
+                continue
+            if self.is_known_wall(px, py):
+                continue
+
+            self.new_object_points.append([px, py])
+
+            best_idx, best_dist = -1, self.live_merge_dist
+            for j, lb in enumerate(self.live_boxes):
+                d = math.hypot(px - lb[0], py - lb[1])
+                if d < best_dist:
+                    best_dist, best_idx = d, j
+
+            if best_idx >= 0:
+                lb = self.live_boxes[best_idx]
+                n = lb[2]
+                lb[0] = (lb[0]*n + px) / (n+1)
+                lb[1] = (lb[1]*n + py) / (n+1)
+                lb[2] = n + 1
+            else:
+                self.live_boxes.append([px, py, 1])
+                rospy.loginfo("LiDAR: new object (%.1f, %.1f) count=%d", px, py, len(self.live_boxes))
+
+    # -- clustering --
+
+    def cluster_boxes(self):
+        n_raw = len(self.new_object_points)
+        if n_raw < self.cluster_min_pts:
+            return []
+        pts = self._grid_downsample(np.array(self.new_object_points), self.grid_cell)
+        rospy.loginfo("Clustering: %d raw -> %d cells", n_raw, len(pts))
+        clusters = self._dbscan(pts, self.cluster_eps, self.cluster_min_pts)
+
+        candidates = []
+        for cl in clusters:
+            cx, cy = np.mean(cl[:,0]), np.mean(cl[:,1])
+            ext_x, ext_y = np.ptp(cl[:,0]), np.ptp(cl[:,1])
+            mx_ext, mn_ext = max(ext_x, ext_y), min(ext_x, ext_y)
+            if not (self.box_extent_min <= mx_ext <= self.box_extent_max):
+                continue
+            if mx_ext > 0.1 and mn_ext / mx_ext < 0.15:
+                continue
+            candidates.append((cx, cy, len(cl)))
+
+        merged = self._merge_nearby(candidates, 1.5)
+        rospy.loginfo("Clustered %d -> merged %d boxes", len(candidates), len(merged))
+        return merged
+
+    @staticmethod
+    def _grid_downsample(points, cell):
+        seen = {}
+        for p in points:
+            key = (int(p[0]/cell), int(p[1]/cell))
+            if key not in seen:
+                seen[key] = p
+        return np.array(list(seen.values()))
+
+    @staticmethod
+    def _dbscan(points, eps, min_pts):
+        n = len(points)
+        visited = np.zeros(n, dtype=bool)
+        clusters = []
+        for i in range(n):
+            if visited[i]:
+                continue
+            visited[i] = True
+            idxs, queue = [i], [i]
+            while queue:
+                idx = queue.pop(0)
+                dists = np.linalg.norm(points - points[idx], axis=1)
+                nbs = np.where((dists < eps) & (~visited))[0]
+                for nb in nbs:
+                    visited[nb] = True
+                    idxs.append(nb)
+                    queue.append(nb)
+            if len(idxs) >= min_pts:
+                clusters.append(points[idxs])
+        return clusters
+
+    @staticmethod
+    def _merge_nearby(candidates, min_dist):
+        if not candidates:
+            return []
+        used = [False] * len(candidates)
+        merged = []
+        for i in range(len(candidates)):
+            if used[i]:
+                continue
+            used[i] = True
+            cx, cy, cnt = candidates[i]
+            sx, sy, sn = cx*cnt, cy*cnt, cnt
+            for j in range(i+1, len(candidates)):
+                if used[j]:
+                    continue
+                if math.hypot(cx - candidates[j][0], cy - candidates[j][1]) < min_dist:
+                    used[j] = True
+                    sx += candidates[j][0]*candidates[j][2]
+                    sy += candidates[j][1]*candidates[j][2]
+                    sn += candidates[j][2]
+            merged.append([sx/sn, sy/sn])
+        return merged
+
+    # -- camera detection --
+
+    def image_callback(self, msg):
+        try:
+            self.latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception:
+            return
+        if not self.ocr_active:
+            return
+
+        now = rospy.Time.now()
+        if self.last_ocr_time and (now - self.last_ocr_time).to_sec() < 0.2:
+            return
+        self.last_ocr_time = now
+
+        # skip if amcl is lost
+        if self.amcl_covariance is not None:
+            cxx, cyy, cyaw = self.amcl_covariance
+            if math.isnan(cxx) or math.isnan(cyy) or math.isnan(cyaw) or \
+                    cxx > self.amcl_cov_threshold or cyy > self.amcl_cov_threshold:
+                return
+
+        pose = self.get_robot_pose()
+        if pose is None:
+            return
+        rx, ry = pose[0], pose[1]
+
+        frame = self.latest_frame.copy()
+        for (x, y, w, h) in self._find_box_regions(frame):
+            px, py = int(w*0.1), int(h*0.1)
+            roi = frame[y+py:y+h-py, x+px:x+w-px]
+            if roi.size == 0:
+                continue
+            digit = self._match_digit(roi)
+            if digit is None:
+                continue
+
+            # spatial confirmation
+            matched_key = None
+            for k in self.ocr_confirm:
+                if k[0] == digit and math.hypot(rx-k[1], ry-k[2]) < self.ocr_confirm_radius:
+                    matched_key = k
+                    break
+            if matched_key:
+                self.ocr_confirm[matched_key] += 1
+            else:
+                matched_key = (digit, rx, ry)
+                self.ocr_confirm[matched_key] = 1
+            if self.ocr_confirm[matched_key] < self.ocr_confirm_threshold:
+                continue
+
+            # dedup
+            is_dup = any(dd == digit and math.hypot(rx-dx, ry-dy) < self.ocr_dedup_dist
+                         for dd, dx, dy in self.camera_detections)
+            if not is_dup:
+                self.camera_detections.append((digit, rx, ry))
+                rospy.loginfo("CAMERA: digit %d at (%.1f,%.1f) total=%d",
+                              digit, rx, ry, len(self.camera_detections))
+
+    @staticmethod
+    def _find_box_regions(frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5,5), 0)
+        edges = cv2.Canny(blurred, 30, 100)
+        edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (5,5)), iterations=2)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        regions = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            area = w * h
+            if area < 2000 or area > 80000:
+                continue
+            if not (0.4 < float(w)/h < 2.5):
+                continue
+            if gray[y:y+h, x:x+w].std() < 20:
+                continue
+            regions.append((x, y, w, h))
+        return regions
+
+    def _match_digit(self, roi):
+        """Hybrid: tesseract for digit ID, template matching as cross-check."""
+        if roi.size == 0:
+            return None
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+
+        # tesseract
+        _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY)
+        padded = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
+        try:
+            result = pytesseract.image_to_string(
+                padded, config='--psm 10 -c tessedit_char_whitelist=123456789').strip()
+        except Exception:
+            return None
+        if not result or len(result) != 1 or not result.isdigit():
+            return None
+        tess_digit = int(result)
+        if tess_digit < 1 or tess_digit > 9:
+            return None
+
+        # template cross-check
+        if self.templates:
+            rh, rw = gray.shape[:2]
+            scores = {}
+            for digit, tmpls in self.templates.items():
+                best = -1.0
+                for tmpl in tmpls:
+                    th, tw = tmpl.shape[:2]
+                    if tw >= rw or th >= rh:
+                        continue
+                    _, mv, _, _ = cv2.minMaxLoc(cv2.matchTemplate(gray, tmpl, cv2.TM_CCOEFF_NORMED))
+                    if mv > best:
+                        best = mv
+                scores[digit] = best
+
+            tmpl_best = max(scores, key=scores.get)
+            if tmpl_best == tess_digit:
+                return tess_digit
+            ranked = sorted(scores.values(), reverse=True)
+            if len(ranked) > 1 and ranked[0] - ranked[1] < self.match_margin:
+                return tess_digit
+            return None
+
+        return tess_digit
+
+    # -- navigation --
+
+    def _ensure_move_client(self):
+        if self.move_client is None:
+            self.move_client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+            rospy.loginfo("Waiting for move_base...")
+            self.move_client.wait_for_server(rospy.Duration(10.0))
+
+    def _make_goal(self, x, y, yaw):
+        goal = MoveBaseGoal()
+        goal.target_pose.header.frame_id = 'map'
+        goal.target_pose.header.stamp = rospy.Time.now()
+        goal.target_pose.pose.position.x = x
+        goal.target_pose.pose.position.y = y
+        q = quaternion_from_euler(0, 0, yaw)
+        goal.target_pose.pose.orientation.x = q[0]
+        goal.target_pose.pose.orientation.y = q[1]
+        goal.target_pose.pose.orientation.z = q[2]
+        goal.target_pose.pose.orientation.w = q[3]
+        return goal
+
+    @staticmethod
+    def _interpolate_waypoints(waypoints, step=3.0):
+        result = []
+        for i in range(len(waypoints)):
+            mx, my, myaw = waypoints[i]
+            if i == 0:
+                result.append((mx, my, myaw))
+                continue
+            px, py, _ = waypoints[i-1]
+            dx, dy = mx - px, my - py
+            dist = math.hypot(dx, dy)
+            if dist <= step:
+                result.append((mx, my, myaw))
+            else:
+                n = int(math.ceil(dist / step))
+                for s in range(1, n+1):
+                    t = s / n
+                    iyaw = math.atan2(dy, dx) if s < n else myaw
+                    result.append((px + dx*t, py + dy*t, iyaw))
+        return result
+
+    def _backup_and_clear(self, distance=1.0, speed=0.3):
+        twist = Twist()
+        twist.linear.x = -speed
+        start = rospy.Time.now()
+        r = rospy.Rate(20)
+        while (rospy.Time.now() - start).to_sec() < distance / speed:
+            self.cmd_vel_pub.publish(twist)
+            r.sleep()
+        self.cmd_vel_pub.publish(Twist())
+        try:
+            from std_srvs.srv import Empty
+            rospy.ServiceProxy('/move_base/clear_costmaps', Empty)()
+        except Exception:
+            pass
+        if self.last_good_pose is not None:
+            self._reset_pose(*self.last_good_pose, reason="post-stuck")
+        rospy.sleep(0.3)
+
+    def sweep_waypoints(self, waypoints, proximity=1.5, timeout_per_wp=8.0):
+        self._ensure_move_client()
+        rate = rospy.Rate(5)
+        sub_goals = self._interpolate_waypoints(waypoints, step=3.0)
+        rospy.loginfo("Sweep: %d waypoints -> %d sub-goals", len(waypoints), len(sub_goals))
+
+        for i, (mx, my, myaw) in enumerate(sub_goals):
+            if rospy.is_shutdown():
+                return
+            if i % 3 == 0 or i == len(sub_goals) - 1:
+                rospy.loginfo("Sub-goal %d/%d (%.1f,%.1f) pts=%d cam=%d",
+                              i+1, len(sub_goals), mx, my,
+                              len(self.new_object_points), len(self.camera_detections))
+
+            self.move_client.send_goal(self._make_goal(mx, my, myaw))
+            start = rospy.Time.now()
+            last_pose = self.get_robot_pose()
+            last_move_time = start
+
+            while not rospy.is_shutdown():
+                elapsed = (rospy.Time.now() - start).to_sec()
+                self.check_amcl_drift()
+
+                cur = self.get_robot_pose()
+                if cur is not None:
+                    if math.hypot(cur[0]-mx, cur[1]-my) < proximity:
+                        break
+                    if last_pose is not None:
+                        if math.hypot(cur[0]-last_pose[0], cur[1]-last_pose[1]) > 0.15:
+                            last_pose, last_move_time = cur, rospy.Time.now()
+                    if (rospy.Time.now() - last_move_time).to_sec() > 2.0:
+                        self.move_client.cancel_goal()
+                        self._backup_and_clear()
+                        rospy.logwarn("Sub-goal %d STUCK, skipping", i+1)
+                        break
+
+                if elapsed > timeout_per_wp:
+                    rospy.logwarn("Sub-goal %d TIMEOUT, skipping", i+1)
+                    break
+                state = self.move_client.get_state()
+                if state in [3, 4, 5, 9]:
+                    if state == 4:
+                        self._backup_and_clear()
+                    break
+                rate.sleep()
+
+        self.move_client.cancel_goal()
+
+    # -- rviz markers --
+
+    def publish_markers(self):
+        ma = MarkerArray()
+        for i, (bx, by) in enumerate(self.box_positions):
+            m = Marker()
+            m.header.frame_id = 'map'
+            m.header.stamp = rospy.Time.now()
+            m.ns, m.id, m.type, m.action = 'boxes', i, Marker.CUBE, Marker.ADD
+            m.pose.position.x, m.pose.position.y, m.pose.position.z = bx, by, 0.4
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = BOX_SIZE
+            c = (0.0, 1.0, 0.0) if self.box_digits[i] is not None else (1.0, 1.0, 0.0)
+            m.color.r, m.color.g, m.color.b, m.color.a = c[0], c[1], c[2], 0.6
+            ma.markers.append(m)
+
+            t = Marker()
+            t.header.frame_id = 'map'
+            t.header.stamp = rospy.Time.now()
+            t.ns, t.id, t.type, t.action = 'labels', i, Marker.TEXT_VIEW_FACING, Marker.ADD
+            t.pose.position.x, t.pose.position.y, t.pose.position.z = bx, by, 1.2
+            t.scale.z = 0.5
+            t.text = str(self.box_digits[i]) if self.box_digits[i] is not None else '?'
+            t.color.r = t.color.g = t.color.b = t.color.a = 1.0
+            ma.markers.append(t)
+        self.marker_pub.publish(ma)
+
+    # -- frame calibration --
+
+    def world_to_map(self, wx, wy):
+        return (wx + self.offset_x, wy + self.offset_y)
+
+    def calibrate_frames(self):
+        rx, ry, _ = self.get_robot_pose()
+        try:
+            from gazebo_msgs.srv import GetModelState
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=5)
+            state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)('jackal', 'world')
+            self.offset_x = rx - state.pose.position.x
+            self.offset_y = ry - state.pose.position.y
+        except Exception:
+            self.offset_x, self.offset_y = rx, ry
+        rospy.loginfo("World->map offset: (%.2f, %.2f)", self.offset_x, self.offset_y)
+
+    # -- main --
+
+    def run(self):
+        rate = rospy.Rate(1)
+        rospy.loginfo("Waiting for TF...")
+        while not rospy.is_shutdown():
+            if self.get_robot_pose() is not None:
+                break
+            rate.sleep()
+        rospy.sleep(1.0)
+        self.calibrate_frames()
+
+        rospy.loginfo("Waiting for map...")
+        while not rospy.is_shutdown() and not self.map_loaded:
+            rate.sleep()
+
+        self.spawn_min_x = WORLD_SPAWN_X[0] + self.offset_x
+        self.spawn_max_x = WORLD_SPAWN_X[1] + self.offset_x
+        self.spawn_min_y = WORLD_SPAWN_Y[0] + self.offset_y
+        self.spawn_max_y = WORLD_SPAWN_Y[1] + self.offset_y
+        rospy.loginfo("Spawn area (map): X[%.1f,%.1f] Y[%.1f,%.1f]",
+                      self.spawn_min_x, self.spawn_max_x, self.spawn_min_y, self.spawn_max_y)
+
+        sweep_pts = [(wx + self.offset_x, wy + self.offset_y, wyaw)
+                     for wx, wy, wyaw in SWEEP_WAYPOINTS_WORLD]
+
+        # sweep
+        rospy.loginfo("=== Starting sweep ===")
+        self.collecting_points = True
+        self.ocr_active = True
+        self.sweep_waypoints(sweep_pts, proximity=1.5, timeout_per_wp=10.0)
+        self.collecting_points = False
+        self.ocr_active = False
+
+        rospy.loginfo("Sweep done. LiDAR pts=%d, camera=%d",
+                      len(self.new_object_points), len(self.camera_detections))
+
+        # cluster lidar
+        self.box_positions = self.cluster_boxes()
+        self.box_digits = [None] * len(self.box_positions)
+        rospy.loginfo("LiDAR: %d box positions", len(self.box_positions))
+
+        # match camera to lidar
+        for digit, rx, ry in self.camera_detections:
+            best_idx, best_dist = None, 5.0
+            for j, (bx, by) in enumerate(self.box_positions):
+                d = math.hypot(rx-bx, ry-by)
+                if d < best_dist:
+                    best_dist, best_idx = d, j
+            if best_idx is not None and self.box_digits[best_idx] is None:
+                self.box_digits[best_idx] = digit
+
+        # report
+        self.publish_markers()
+        cam_counts = {}
+        for digit, _, _ in self.camera_detections:
+            cam_counts[digit] = cam_counts.get(digit, 0) + 1
+
+        if cam_counts:
+            sorted_c = sorted(cam_counts.items())
+            total = sum(cam_counts.values())
+            rarest = min(cam_counts, key=cam_counts.get)
+            rospy.loginfo("BOX COUNTS (camera):")
+            for num, cnt in sorted_c:
+                rospy.loginfo("  Number %d: %d boxes", num, cnt)
+            rospy.loginfo("  TOTAL: %d boxes", total)
+            rospy.loginfo("  RAREST: number %d (count=%d)", rarest, cam_counts[rarest])
+            msg = "Total: {} | {} | Rarest: {}".format(
+                total, ", ".join("Box {}: {}".format(n, c) for n, c in sorted_c), rarest)
+            self.count_pub.publish(String(data=msg))
+        else:
+            rospy.logwarn("NO DIGITS DETECTED")
+
+        rospy.loginfo("Done. Results on /box_counter/counts")
+        rospy.spin()
+
+
+if __name__ == '__main__':
+    try:
+        BoxCounter().run()
+    except rospy.ROSInterruptException:
+        pass

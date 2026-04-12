@@ -51,3 +51,17 @@ qtcreator-*
 
 # Catkin custom files
 CATKIN_IGNORE
+
+# Docker (local dev environment)
+Dockerfile
+docker-compose.yml
+docker_run.sh
+.dockerignore
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Debug images
+debug_roi_*.png
+__pycache__/
