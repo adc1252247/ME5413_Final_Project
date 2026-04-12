@@ -1,6 +1,42 @@
 # Final Project Overview
 Forked from [NUS-Advanced-Robotics-Centre's ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
 
+## Running the code
+```sh
+# Ensure all dependencies are installed - see below
+# Call all commands from this repository
+catkin_make
+
+# Terminal 1
+source devel/setup.bash
+roslaunch me5413_world world.launch
+
+# Terminal 2
+source devel/setup.bash
+roslaunch me5413_world navigation.launch
+# Before opening the next terminal, click the "Respawn Objects" button in RVIZ
+
+# Terminal 3
+source devel/setup.bash
+roslaunch me5413_group9 main
+```
+
+### Code Breakdown
+The most important files are in `/src/me5413_group9` directory. Otherwise, the only changes were some config files and params in launch files.
+```txt
+/src/me5413_group9/
+     ├── src/                       ## The following are the imporant files
+     │   ├── main.cpp               # Defines the "main" node to be run, and handles level 2
+     │   ├── phase_2_slope.cpp      # Defines the logic for navigating the outdoor ramp
+     │   ├── corridor_navigator.cpp # Defines the logic for getting through the 
+     │   │                          # first corridor on level 2
+     │   └── ...                    # The rest are either unused, or define utilities
+     │
+     ├── scripts/
+         └── box_counter.py         # The first-floor big room logic
+```
+
+### More Details
 **Mapping:** For mapping we used GMapping through `me5413_world mapping.launch`, but with a modified `/front/scan` topic which increased the range of the scan, and showed short features such as the lower ledges in the scene. This was handled with node `me5413_group9 laserscan_from_lidar` which requires that the original `/front/scan` be remapped to something else.
 
 **Box Detection & Counting:** For detecting the numbers on the boxes, we used a combination of OpenCV's feature matching, and Tesseract ORT. This script is at `src/me5413_world/scripts/box_counter_node.py`. It uses templates located under `src/me5413_group9/boxes/cropped`.
