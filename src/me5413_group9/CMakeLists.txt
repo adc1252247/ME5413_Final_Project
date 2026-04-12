@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(catkin REQUIRED COMPONENTS
   cv_bridge
+  roslib
   roscpp
   geometry_msgs
   nav_msgs
@@ -60,16 +61,3 @@ add_dependencies(phase_2_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPOR
 # add_executable(corridor_navigator src/corridor_navigator.cpp)
 # target_link_libraries(corridor_navigator ${catkin_LIBRARIES})
 
-file(GLOB_RECURSE cmake_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cmake")
-list(SORT cmake_files)
-
-message(STATUS "Files: ${cmake_files}")
-
-foreach(cmake_file ${cmake_files})
-    if(EXISTS ${cmake_file})
-        message(STATUS "Including: ${cmake_file}")
-        include(${cmake_file})
-    else()
-        message(WARNING "CMake file not found: ${cmake_file}")
-    endif()
-endforeach()
