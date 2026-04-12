@@ -39,7 +39,35 @@ class MapChanger {
         void change_map(const std::string& pkg, const std::string& path);
 };
 
+/// @brief 
+class RobotPose {
+    private:
+        ros::NodeHandle nh;
+        ros::Subscriber sub;
+        geometry_msgs::PoseWithCovarianceStamped pose;
+
+    public:
+        /// @brief Set up subsription to get pose of robot
+        RobotPose(const std::string& topic="/amcl_pose");
+
+        /// @brief Populate the pose
+        void callback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+
+        double get_x() const;
+
+        double get_y() const;
+
+        double get_z() const;
+
+        double get_w() const;
+
+        double get_yaw() const;
+};
+
 class RobotMover {
+    public:
+        RobotPose                    pose;
+
     private:
         MoveBaseClient               mbc;
         move_base_msgs::MoveBaseGoal goal;
@@ -105,6 +133,13 @@ class RobotMover {
 
         /// @brief Getter time of request
         ros::Time requested_time() const;
+
+        /// @brief Distance to target 
+        double dist_to_target() const;
+
+        double angle_to_target() const;
+
+        void move_to(double x, double y, double z, double w);
 };
 
 class RobotPlan {
@@ -127,32 +162,6 @@ class RobotPlan {
 
         /// @brief Raw access to the path
         const nav_msgs::Path& get_path() const;
-};
-
-/// @brief 
-class RobotPose {
-    private:
-        ros::NodeHandle nh;
-        ros::Subscriber sub;
-        geometry_msgs::PoseStamped pose;
-
-    public:
-        /// @brief Set up subsription to get pose of robot
-        RobotPose(const std::string& topic);
-
-        /// @brief Populate the pose
-        void callback(const geometry_msgs::PoseStamped::ConstPtr& msg);
-
-        double get_x() const;
-
-        double get_y() const;
-
-        double get_z() const;
-
-        double get_w() const;
-
-        double get_yaw() const;
-
 };
 
 class RobotOdometry {
@@ -320,6 +329,77 @@ bool RobotMover::is_active() const {
 ros::Time RobotMover::requested_time() const {
     return goal.target_pose.header.stamp;
 }
+
+double RobotMover::dist_to_target() const {
+    double x = target_x() - pose.get_x();
+    double y = target_y() - pose.get_y();
+
+    return sqrt(x*x + y*y);
+}
+
+double RobotMover::angle_to_target() const {
+    return target_yaw() - pose.get_yaw();
+}
+
+void RobotMover::move_to(double x, double y, double z, double w) {
+    new_target(x, y, z, w);
+    ros::Rate loop_rate(10);
+
+    while ( mbc.getState() == GoalState::PENDING ) {
+        ROS_INFO("Waiting for move_base to start...");
+        loop_rate.sleep();
+    }
+
+    while ( ros::ok() ) {
+        ros::spinOnce();
+
+        if ( dist_to_target() < 0.03 || abs(angle_to_target()) < 0.01 ) {
+            ROS_INFO("Stopped moving by proximity!");
+            cancel();
+            break;
+        }
+
+        else if ( !is_active() ) {
+            ROS_INFO("Stopped moving by controller!");
+            break;
+        }
+
+        loop_rate.sleep();
+    }
+}
+
+
+/// ==================
+/// === Pose STUFF ===
+RobotPose::RobotPose(const std::string& topic) {
+    sub = nh.subscribe(topic, 10, &RobotPose::callback, this);
+}
+
+void RobotPose::callback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg) {
+    pose = *msg;
+}
+
+double RobotPose::get_x() const {
+    return pose.pose.pose.position.x;
+}
+
+double RobotPose::get_y() const {
+    return pose.pose.pose.position.y;
+}
+
+double RobotPose::get_z() const {
+    return pose.pose.pose.orientation.z;
+}
+
+double RobotPose::get_w() const {
+    return pose.pose.pose.orientation.w;
+}
+
+double RobotPose::get_yaw() const {
+    tf::Quaternion q(0, 0, get_z(), get_w());
+    return tf::getYaw(q);
+}
+
 
 
 

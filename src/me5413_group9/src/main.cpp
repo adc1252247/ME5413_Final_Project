@@ -26,11 +26,13 @@ int main(int argc, char** argv) {
 
     /// Go to reliable start-position for Brian's portion
     ROS_INFO("Exiting Level 1...");
-    mover.new_target(3.5218276977539062, -4.5353779792785645, -0.47405048895524854, 0.8804976626438538);
-    if ( !mover.wait(ros::Duration(25.0)) ) {
-        ROS_INFO("Did not complete!");
-        mover.cancel();
-    }
+    mover.move_to(4.537387847900391, 2.528341770172119, -0.4747749438723549, 0.8801072393015537);
+    // mover.move_to(3.5218276977539062, -4.5353779792785645, -0.47405048895524854, 0.8804976626438538);
+    mover.move_to(4.307516098022461, -5.279576301574707, -0.4948095134644987, 0.8690014645471124);
+    // if ( !mover.wait(ros::Duration(25.0)) ) {
+    //     ROS_INFO("Did not complete!");
+    //     mover.cancel();
+    // }
 
     /// ::: Start Brian's Code :::
     {
@@ -56,7 +58,7 @@ int main(int argc, char** argv) {
         set_amcl_estimate(38.801937103271484, 25.503082275390625, 0.8795368586003314, 0.4758307623130945);
         ros::spinOnce();
 
-        mover.new_target(36.76942825317383, 23.973785400390625, -0.4538629410501477, 0.891071507086446);
-        mover.wait(ros::Duration(20.0));
+        mover.move_to(36.76942825317383, 23.973785400390625, -0.4538629410501477, 0.891071507086446);
+        // mover.wait(ros::Duration(20.0));
     }
 }
