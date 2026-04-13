@@ -4,15 +4,12 @@
  * rostopic echo /initialpose
  * rostopic echo /move_base_simple/goal
  * 
- * Strategies:
- *   - Room 1: Go to each corner using move_base, stop and face box to detect when new one is found
- *   - Outdoors: Wall following
- *   - Room 2: Go to each partition to check for obstacle, have stop on either side of cylinder too
- * 
  * Intended for me5413_world navigation.launch w/ me5413_group9's lvl1_gmapping
  */
 #include <cstdlib> // To run the python file
 #include <chrono>  // To take the time
+#include <fstream>
+#include <stdexcept>
 
 #include "robot_control.hpp" // include/robot_control.hpp
 #include "phase_2_slope.cpp"
@@ -32,6 +29,7 @@ Pose pose_after_cone(8.93, -2.98, 0.00, 0.99);
 
 
 Pose pose_after_4i(47.90, -20.16, 0.21, 0.98);
+Pose facing_first_corner(47.30, -17.07, -0.99, 0.17);
 Pose facing_top_cone(42.22, -15.85, 0.77, 0.63);
 Pose facing_bottom_cone(32.92, -18.88, 0.78, 0.63);
 
@@ -75,6 +73,9 @@ void section_end(const std::string& s, const Timer& t);
 /// @brief Utility for circle fitting
 std::vector<Arc> detect_circles(const sensor_msgs::LaserScan& scan);
 
+/// @brief Get the target box
+int read_target_box();
+
 //////////// ///////////////////////////////////////////////////////////
 /// MAIN /// ///////////////////////////////////////////////////////////
 //////////// ///////////////////////////////////////////////////////////
@@ -96,7 +97,7 @@ int main(int argc, char** argv) {
 
     bool skip_1, from_spawn;
     nh.param("skip_1", skip_1, true);
-    nh.param("from_spawn", from_spawn, false);
+    nh.param("from_spawn", from_spawn, true);
 
     if ( from_spawn ) 
         set_amcl_estimate(on_spawn);
@@ -112,7 +113,10 @@ int main(int argc, char** argv) {
         exit(-1);
     }
 
+    int box_target = read_target_box();
+
     section_end("1) Box Counter", timer);
+    ROS_INFO("Target box was found to be '%d'!", box_target);
 
     /// ::::::::::::::::::::::::::::
     /// ::: SECTION 2 - The cone :::
@@ -131,7 +135,7 @@ int main(int argc, char** argv) {
 
     JackalPotentialField().run();
 
-    section_end("3) The Rampe", timer);
+    section_end("3) The Ramp", timer);
 
     /// ::::::::::::::::::::::::::::::::::::::
     /// ::: SECTION 4 pt. i - The corridor :::
@@ -151,9 +155,19 @@ int main(int argc, char** argv) {
     mc.change_map("me5413_world", "/maps/lvl2_improved.yaml");
 
     ROS_INFO("Zeroing in on level 2 map!");
-    set_amcl_estimate(pose_after_4i);
     clear_costmap();
+    set_amcl_estimate(pose_after_4i);
+    ros::Duration(2.0).sleep(); // Give some time to think :)
 
+    // Do a quarter turn
+    ros::spinOnce();
+    mover.move_to(RobotMover::Pose(mover.pose.get_x(), mover.pose.get_y(), mover.pose.get_yaw() + M_PI / 2));
+
+    ros::Duration(2.0).sleep();
+    mover.move_to(facing_first_corner);
+
+    // Now continue
+    ROS_INFO("If it ain't zeroed in now, you've failed :(");
     mover.move_to(facing_top_cone);
 
     std::vector<Arc> arcs = detect_circles(front_scan.get());
@@ -266,4 +280,21 @@ std::vector<Arc> detect_circles(const sensor_msgs::LaserScan& scan) {
     auto points = pointify(scan.ranges, cfg);
 
     return segment_arcs(points);
+}
+
+int read_target_box() {
+    std::ifstream file("/tmp/rarest_box.txt");
+
+    if ( !file.is_open() ) {
+        ROS_ERROR("Ensure that the rarest box is stored at '/tmp/rarest_box.txt'");
+        throw std::runtime_error("Rarest box was not appropriately stored!");
+    }
+
+    char digit;
+    if ( !file.get(digit) || digit < '1' || digit > '9' ) {
+        ROS_ERROR("Malformed '/tmp/rarest_box.txt'");
+        throw std::runtime_error("Malformed rarest box file!");
+    }
+
+    return digit - '0';
 }

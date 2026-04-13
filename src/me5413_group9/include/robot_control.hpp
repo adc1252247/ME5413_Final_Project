@@ -164,6 +164,8 @@ class RobotMover {
         /// @brief Cancel the last move
         void cancel();
 
+        void force_cancel();
+
         /// @brief Wait for completion, or until timeout
         bool wait(ros::Duration timeout);
 
@@ -345,6 +347,10 @@ void RobotMover::cancel(){
     }
 }
 
+void RobotMover::force_cancel() {
+    mbc.cancelGoal();
+}
+
 bool RobotMover::wait(ros::Duration timeout) {
     if ( mbc.getState() == GoalState::ACTIVE
       || mbc.getState() == GoalState::PENDING )
@@ -465,7 +471,7 @@ void RobotMover::move_to(double x, double y, double z, double w) {
     bool success = dist_to_target() < 0.5 && abs(angle_to_target()) < 0.5;
 
     if ( !success )
-        ROS_ERROR("Early exit from 'move_to'!!!")
+        ROS_ERROR("Early exit from 'move_to'!!!");
         // throw std::runtime_error("Failed to reach!");
 }
 
