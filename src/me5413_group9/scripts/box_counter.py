@@ -99,6 +99,14 @@ class BoxCounter:
         self.spawn_min_x = self.spawn_max_x = 0.0
         self.spawn_min_y = self.spawn_max_y = 0.0
 
+        # handover to C++: write rarest digit to a file so the next task can
+        # consume it without a ROS client. Latest counts are stashed in
+        # self.final_counts at the end of run() and re-read on shutdown.
+        self.output_file = rospy.get_param(
+            '~output_file', '/tmp/rarest_box.txt')
+        self.final_counts = None
+        rospy.on_shutdown(self.write_result_file)
+
         # publishers
         self.count_pub = rospy.Publisher('/box_counter/counts', String, queue_size=10, latch=True)
         self.marker_pub = rospy.Publisher('/box_counter/box_markers', MarkerArray, queue_size=10, latch=True)
@@ -1008,10 +1016,12 @@ class BoxCounter:
         for (_, _, dig, _) in camera_boxes:
             cam_counts[dig] = cam_counts.get(dig, 0) + 1
 
+        self.final_counts = dict(cam_counts)
         if cam_counts:
             sorted_c = sorted(cam_counts.items())
             total = sum(cam_counts.values())
-            rarest = min(cam_counts, key=cam_counts.get)
+            # Deterministic tie-break: lowest count, then lowest digit.
+            rarest = min(cam_counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
             rospy.loginfo("BOX COUNTS (camera):")
             for num, cnt in sorted_c:
                 rospy.loginfo("  Number %d: %d boxes", num, cnt)
@@ -1038,7 +1048,28 @@ class BoxCounter:
         end_y = end_wy + self.offset_y
         self._return_to_waypoint(end_x, end_y, end_wyaw, proximity=1.0, max_attempts=5)
 
-        rospy.spin()
+        # Sweep complete. Trigger shutdown so the on_shutdown hook writes the
+        # result file and the process exits cleanly for the C++ caller.
+        rospy.loginfo("Sweep complete; shutting down for handoff.")
+        rospy.signal_shutdown("box counting complete")
+
+    def write_result_file(self):
+        """Write rarest digit to ~output_file for C++ handover."""
+        counts = self.final_counts or {}
+        if counts:
+            rarest = min(counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
+            payload = "{}\n".format(rarest)
+        else:
+            rospy.logwarn("No digits detected; writing 0 to %s",
+                          self.output_file)
+            payload = "0\n"
+        try:
+            with open(self.output_file, 'w') as f:
+                f.write(payload)
+            rospy.loginfo("Wrote rarest=%s to %s",
+                          payload.strip(), self.output_file)
+        except OSError as e:
+            rospy.logerr("Failed to write %s: %s", self.output_file, e)
 
     def _return_to_waypoint(self, x, y, yaw, proximity=1.0, max_attempts=5,
                             per_attempt_timeout=25.0):
@@ -1091,7 +1122,11 @@ class BoxCounter:
 
 
 if __name__ == '__main__':
+    import sys
     try:
         BoxCounter().run()
     except rospy.ROSInterruptException:
         pass
+    # rospy.on_shutdown writes the result file; explicit exit(0) so the
+    # C++ caller gets a clean return code.
+    sys.exit(0)
