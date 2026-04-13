@@ -57,18 +57,7 @@ add_executable(laserscan_from_lidar src/laserscan_from_lidar.cpp)
 target_link_libraries(laserscan_from_lidar ${catkin_LIBRARIES})
 
 add_executable(main src/main.cpp src/common/template_matching.cpp)
-target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS})
-
-# Phase 2 executable
-add_executable(phase_2_node src/phase_2.cpp)
-target_link_libraries(phase_2_node ${catkin_LIBRARIES} ${OpenCV_LIBS})
-add_dependencies(phase_2_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-# add_executable(phase_2_slope_node src/phase_2_slope.cpp)
-# target_link_libraries(phase_2_slope_node ${catkin_LIBRARIES})
-
-# add_executable(corridor_navigator src/corridor_navigator.cpp)
-# target_link_libraries(corridor_navigator ${catkin_LIBRARIES})
+target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
 
 add_executable(circle_fitting src/circle_fitting_test.cpp)
 target_link_libraries(circle_fitting ${catkin_LIBRARIES} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)

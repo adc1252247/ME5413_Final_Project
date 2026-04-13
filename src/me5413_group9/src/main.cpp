@@ -1,4 +1,7 @@
 /**
+ *   Requires:
+ * sudo apt install ros-noetic-pcl-ros libpcl-dev
+ * 
  *   Recommendation:
  * catkin_make > /dev/null && rosrun me5413_group9 main
  * rostopic echo /initialpose
@@ -32,6 +35,20 @@ Pose pose_after_4i(47.90, -20.16, 0.21, 0.98);
 Pose facing_first_corner(47.30, -17.07, -0.99, 0.17);
 Pose facing_top_cone(42.22, -15.85, 0.77, 0.63);
 Pose facing_bottom_cone(32.92, -18.88, 0.78, 0.63);
+// Pose after_bottom_cone();
+
+// Pose before_room_3();
+// Pose in_room_3();
+// Pose facing_room_4();
+// Pose facing_room_2();
+// Pose before_room_4();
+// Pose in_room_4();
+// Pose before_room_3();
+// Pose in_room_3();
+// Pose before_room_2();
+// Pose in_room_2();
+// Pose before_room_1();
+// Pose in_room_1();
 
 ///////////// //////////////////////////////////////////////////////////
 /// UTILS /// //////////////////////////////////////////////////////////
@@ -96,7 +113,7 @@ int main(int argc, char** argv) {
     section("Step 1) Box Counter", timer);
 
     bool skip_1, from_spawn;
-    nh.param("skip_1", skip_1, true);
+    nh.param("skip_1", skip_1, false);
     nh.param("from_spawn", from_spawn, true);
 
     if ( from_spawn ) 
@@ -173,7 +190,7 @@ int main(int argc, char** argv) {
     std::vector<Arc> arcs = detect_circles(front_scan.get());
     bool blocked = false;
     for ( auto arc: arcs )
-        if ( abs(arc.radius - 0.5) < 0.1 ) // Expected size of cone
+        if ( arc.radius < 0.2 ) // Expected size of cone is 0.148
             blocked = true;
 
     if ( blocked ) {
@@ -185,23 +202,25 @@ int main(int argc, char** argv) {
         ROS_INFO("Seems empty!");
     }
 
+    section_end("4 pt. ii) Another Cone", timer);
 
+    /// ::::::::::::::::::::::::::::::::::
+    /// ::: SECTION 5 - The final room :::
+    section("5) The final room", timer);
 
-    exit(0);
+    // mover.move_to(before_room_3);
+    // wait_for_opening();
+    // mover.move_to(in_room_3);
+    // if ( ... detect ... stay ... )
 
-    /// ::: Reset map to level 2
-    {
-        MapChanger mc;
-        mc.change_map("me5413_world", "/maps/lvl2_gmapping.yaml");
+    // mover.move_to(facing_room_4);
+    // if ( ... detect ... go to 4 ... )
 
-        ROS_INFO("Zeroing in on level 2 map!");
+    // mover.move_to(facing_room_2);
+    // if ( ... detect ... go to 2 ... )
 
-        set_amcl_estimate(38.801937103271484, 25.503082275390625, 0.8795368586003314, 0.4758307623130945);
-        ros::spinOnce();
-
-        mover.move_to(36.76942825317383, 23.973785400390625, -0.4538629410501477, 0.891071507086446);
-        // mover.wait(ros::Duration(20.0));
-    }
+    // ... go to 1 ...
+    section_end("5) The final room", timer);
 }
 
 
