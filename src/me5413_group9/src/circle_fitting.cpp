@@ -1,3 +1,8 @@
+/**
+ * Will detect cone - radius abt. 1.48-ish
+ * Will detect cylinder - radius abt. 0.5
+ */
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/sample_consensus/model_types.h>
@@ -81,18 +86,18 @@ std::vector<Arc> segment_arcs(const std::vector<std::pair<float, float>>& points
     seg.setModelType(pcl::SACMODEL_CIRCLE3D);
     seg.setMethodType(pcl::SAC_RANSAC);
 
-    seg.setDistanceThreshold(0.05);
+    seg.setDistanceThreshold(0.005);
     
     pcl::PointCloud<pcl::PointXYZ>::Ptr remaining(new pcl::PointCloud<pcl::PointXYZ>(*cloud));
     
-    while (remaining->size() > 3) {
+    while (remaining->size() > 5) {
         seg.setInputCloud(remaining);
         seg.segment(*inliers, *coefficients);
         
         if (inliers->indices.empty()) break;
         
         // If too large, ignore
-        if ( coefficients->values[3] < 2.0 ) {
+        if ( coefficients->values[3] < 3.0 ) {
             Arc arc;
             arc.center_x = coefficients->values[0];
             arc.center_y = coefficients->values[1];
