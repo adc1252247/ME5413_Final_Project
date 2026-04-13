@@ -1028,7 +1028,12 @@ class BoxCounter:
         # Guarantee arrival at the final waypoint so the next task can begin.
         # Retries with clear+backup between attempts. Blocks until within 1m
         # of target or attempt cap reached.
-        end_wx, end_wy, end_wyaw = SWEEP_WAYPOINTS_WORLD[-1]
+        # Return to the FIRST sweep waypoint (bottom-left interior corner)
+        # instead of the doorway/exit. The exit waypoint sits in a narrow
+        # passage near the cone where AMCL loses features and drifts; the
+        # entry corner has two walls in view, so the relocalization holds
+        # and the next task starts from a known-good pose.
+        end_wx, end_wy, end_wyaw = SWEEP_WAYPOINTS_WORLD[0]
         end_x = end_wx + self.offset_x
         end_y = end_wy + self.offset_y
         self._return_to_waypoint(end_x, end_y, end_wyaw, proximity=1.0, max_attempts=5)
