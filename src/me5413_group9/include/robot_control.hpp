@@ -11,7 +11,9 @@
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <sensor_msgs/LaserScan.h>
 #include <std_msgs/Bool.h>
+#include <std_srvs/Empty.h>
 
 #include <actionlib/client/simple_action_client.h>
 #include <move_base_msgs/MoveBaseAction.h>
@@ -19,6 +21,47 @@
 #include <tf/tf.h>
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+class FrontScan {
+    private:
+        ros::NodeHandle nh;
+        ros::Subscriber sub;
+
+        sensor_msgs::LaserScan vals;
+
+    public:
+        void callback(const sensor_msgs::LaserScan::ConstPtr& msg) {
+            vals = *msg;
+        }
+        
+        FrontScan() {
+            sub = nh.subscribe("/front/scan", 1, &FrontScan::callback, this);
+        }
+
+        const sensor_msgs::LaserScan& get() {
+            ros::spinOnce();
+            return vals;
+        }
+};
+
+class ConeLvl1 {
+    private:
+        ros::NodeHandle nh;
+        ros::Publisher pub;
+
+    public:
+        ConeLvl1() {
+            pub = nh.advertise<std_msgs::Bool>("/cmd_unblock", 1);
+        }
+
+        void unblock() {
+            std_msgs::Bool msg;
+            msg.data = true;
+
+            ROS_INFO("Clearing the cone now");
+            pub.publish(msg);
+        }
+};
 
 class MapChanger {
     private:
@@ -65,6 +108,21 @@ class RobotPose {
 };
 
 class RobotMover {
+    public:
+        class Pose {
+            public:
+                double x, y, z, w;
+
+            public:
+                Pose(double x_, double y_, double z_, double w_): x(x_), y(y_), z(z_), w(w_) {}
+
+                Pose(double x_, double y_, double yaw_): x(x_), y(y_) {
+                    tf::Quaternion q = tf::createQuaternionFromYaw(yaw_);
+                    z = q.getZ();
+                    w = q.getW();
+                };
+        };
+
     public:
         RobotPose                    pose;
 
@@ -139,7 +197,11 @@ class RobotMover {
 
         double angle_to_target() const;
 
+        /// @throws std::runtime_error if more than 40cm or 15 degrees from target
         void move_to(double x, double y, double z, double w);
+
+        /// @throws std::runtime_error
+        void move_to(Pose pose);
 };
 
 class RobotPlan {
@@ -189,6 +251,8 @@ void replace_amcl_map(const std::string& map_name);
 
 /// @brief Set an initial estimate for the AMCL map localization
 void set_amcl_estimate(double x, double y, double z, double w, const std::string& frame_id="map", const std::string& pose_topic="/initialpose");
+
+void set_amcl_estimate(RobotMover::Pose post);
 
 void clear_cone();
 
@@ -370,7 +434,7 @@ void RobotMover::move_to(double x, double y, double z, double w) {
 
         double dpos = sqrt(dx*dx + dy*dy);
 
-        ROS_INFO("D: %.2f | Yaw: %.2f | Dist: %.2f", dist_to_target(), angle_to_target(), dpos);
+        // ROS_INFO("D: %.2f | Yaw: %.2f | Dist: %.2f", dist_to_target(), angle_to_target(), dpos);
         if ( !is_active() ) {
             ROS_INFO("Stopped moving by controller!");
             break;
@@ -381,7 +445,7 @@ void RobotMover::move_to(double x, double y, double z, double w) {
             break;
         }
         if ( dpos < 0.03 && abs(dyaw) < 0.03 ) {
-            if ( low_count < 30 )
+            if ( low_count < 40 )
                 low_count ++;
             else {
                 ROS_INFO("Stopped moving anywhere!");
@@ -397,7 +461,18 @@ void RobotMover::move_to(double x, double y, double z, double w) {
         last_yaw = curr_yaw;
         loop_rate.sleep();
     }
+
+    bool success = dist_to_target() < 0.5 && abs(angle_to_target()) < 0.5;
+
+    if ( !success )
+        ROS_ERROR("Early exit from 'move_to'!!!")
+        // throw std::runtime_error("Failed to reach!");
 }
+
+void RobotMover::move_to(RobotMover::Pose pose) {
+    move_to(pose.x, pose.y, pose.z, pose.w);
+}
+
 
 
 /// ==================
@@ -468,6 +543,27 @@ void set_amcl_estimate(double x, double y, double z, double w, const std::string
 
     pose_pub.publish(pose_msg);
     ROS_INFO("AMCL initialized to map position (%.2f. %.2f)", x, y);
+
+    ros::Duration(0.5).sleep();
+}
+
+void clear_costmap(const std::string& s = "/move_base/clear_costmaps") {
+    ros::NodeHandle nh;
+
+    ros::service::waitForService(s.c_str());
+
+    ros::ServiceClient clear_client = nh.serviceClient<std_srvs::Empty>(s.c_str());
+
+    std_srvs::Empty srv;
+
+    if ( clear_client.call(srv) )
+        ROS_INFO("Cleared costmap from '%s'!", s.c_str());
+    else
+        ROS_ERROR("Failed to clear costmap with '%s'!", s.c_str());
+}
+
+void set_amcl_estimate(RobotMover::Pose pose) {
+    set_amcl_estimate(pose.x, pose.y, pose.z, pose.w);
 }
 
 // ============
