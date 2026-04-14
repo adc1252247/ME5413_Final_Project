@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
     nh.param<std::string>("output_topic", output_topic, "/front/filtered_scan");
 
     WallFilterer::Settings settings;
-    nh.param<float>("min_height", settings.range_height, 30);
+    nh.param<float>("min_height", settings.range_max, 30);
     nh.param<float>("min_height", settings.min_height, 0.8);
     nh.param<float>("max_height", settings.max_height, 1.6);
 
