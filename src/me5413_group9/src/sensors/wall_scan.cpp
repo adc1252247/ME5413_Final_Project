@@ -22,10 +22,10 @@ class WallFilterer {
             unsigned int increments = 360;
 
             float range_min = 0.05;
-            float range_max = 20.0;
+            float range_max = 30.0;
 
             float min_height = 0.8; // Height of one of the cubes
-            float max_height = 2.0; // Height of door frames
+            float max_height = 1.8; // Height of door frames
         };
 
     private:
@@ -179,8 +179,9 @@ int main(int argc, char** argv) {
     nh.param<std::string>("output_topic", output_topic, "/front/filtered_scan");
 
     WallFilterer::Settings settings;
+    nh.param<float>("min_height", settings.range_height, 30);
     nh.param<float>("min_height", settings.min_height, 0.8);
-    nh.param<float>("max_height", settings.min_height, 2.0);
+    nh.param<float>("max_height", settings.max_height, 1.6);
 
     if ( topic_occupied(output_topic) ) {
         ROS_ERROR(
