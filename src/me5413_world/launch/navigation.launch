@@ -53,10 +53,30 @@
   <!-- Launch Move Base -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
 
-  <param name="move_base/local_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
-  <param name="move_base/local_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
-  <param name="move_base/global_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
-  <param name="move_base/global_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
+    <param name="move_base/global_costmap/update_frequency" value="5.0"/>
+    <param name="move_base/local_costmap/update_frequency" value="10.0"/>
+    <param name="move_base/planner_frequency" value="5.0"/>
+    <param name="move_base/controller_frequency" value="10.0"/>
+
+    <!-- Get move_base to use the correct topics -->
+      <param name="move_base/local_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
+      <param name="move_base/local_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
+      <param name="move_base/global_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
+      <param name="move_base/global_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
+
+    <!-- Disable move_base's recovery behaviors & oscillation stuff -->
+      <param name="move_base/recovery_behavior_enabled" value="false"/>
+      <!-- <param name="move_base/oscillation_timeout" value="0"/> -->
+      <!-- <param name="move_base/oscillation_distance" value="0"/> -->
+
+    <!-- Set tolerance for quicker return -->
+      <!-- <param name="move_base/TrajectoryPlannerROS/xy_goal_tolerance" value="0.5"/> -->
+      <!-- <param name="move_base/TrajectoryPlannerROS/latch_xy_goal_tolerance" value="0.8"/> -->
+      <!-- <param name="move_base/TrajectoryPlannerROS/yaw_goal_tolerance" value="0.35"/> -->
+
+    <!-- Try time-elastic-band local planner -->
+    <param name="move_base/base_local_planner" value="teb_local_planner/TebLocalPlannerROS"/>
+
 
   <!-- Launch Rviz with our settings -->
   <node type="rviz" name="rviz" pkg="rviz" args="-d $(find me5413_world)/rviz/navigation.rviz" output="log" respawn="true"/>
