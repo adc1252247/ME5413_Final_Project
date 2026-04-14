@@ -61,3 +61,6 @@ target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} p
 
 add_executable(circle_fitting src/circle_fitting_test.cpp)
 target_link_libraries(circle_fitting ${catkin_LIBRARIES} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
+
+add_executable(wall_scan src/sensors/wall_scan.cpp)
+target_link_libraries(wall_scan ${catkin_LIBRARIES})

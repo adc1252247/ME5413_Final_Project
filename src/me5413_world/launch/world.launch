@@ -31,4 +31,11 @@
     <!-- Load the destination configuration -->
     <rosparam command="load" file="$(find me5413_world)/config/config.yaml" />
 
+    <!-- Make an alternative topic where the scan is filtered by height -->
+    <node name="wall_scan" pkg="me5413_group9" type="wall_scan" output="screen">
+        <param name="lidar_topic" value="/mid/points"/> <!-- LIDAR topic -->
+        <param name="output_topic" value="/front/filtered_scan"/> <!-- Use this for AMCL -->
+        <param name="min_height" value="0.8"/> <!-- Remove boxes -->
+        <param name="max_height" value="2.0"/> <!-- Remove top of doorframes -->
+    </node>
 </launch>
