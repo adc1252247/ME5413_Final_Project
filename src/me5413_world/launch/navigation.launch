@@ -4,13 +4,51 @@
   <node name="teleop_twist_keyboard" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" output="screen" respawn="true"/>
 
   <!-- Run the map server -->
-  <arg name="map_file" default="$(find me5413_world)/maps/my_map.yaml"/>
+  <arg name="map_file" default="$(find me5413_world)/maps/lvl2_improved.yaml"/>
   <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
   
   <!-- Launch the AMCL Localizer -->
   <include file="$(find jackal_navigation)/launch/include/amcl.launch" />
 
-  <param name="amcl/scan_topic" value="/front/filtered_scan"/>
+    <!-- AMCL Misc. -->
+      <param name="amcl/odom_model_type" value="diff-corrected"/>
+
+      <param name="amcl/scan_topic" value="/front/filtered_scan"/>
+      
+      <param name="amcl/laser_max_beams" value="120"/>
+
+    <!-- Tuning AMCL laser - adjusted to listen almost only to positive matches with the map -->
+      <!-- laser_z_hit - Weightage for "correct" beams -->
+      <!-- laser_z_rand - Random readin tolerance --> 
+      <!-- laser_z_short - Tolerance for obstacles -->
+      <!-- laser_z_max - Ignore inf length beams -->
+      <param name="amcl/laser_z_hit" value="0.97"/>
+      <param name="amcl/laser_z_rand" value="0.01"/> 
+      <param name="amcl/laser_z_short" value="0.02"/> 
+      <param name="amcl/laser_z_max" value="0"/>  
+
+    <!-- Tuning AMCL Motion - Increasing noise and randomness in model for motion 
+      - Increasing these reduced drift when stationary
+    -->
+      <!-- alpha1 - Rotation error from Rotation -->
+      <!-- alpha2 - Rotation error from Translation -->
+      <!-- alpha3 - Translation error from Translation -->
+      <!-- alpha4 - Translation error from Rotation -->
+      <param name="amcl/alpha1" value="0.4"/> 
+      <param name="amcl/alpha2" value="0.4"/> 
+      <param name="amcl/alpha3" value="0.05"/> 
+      <param name="amcl/alpha4" value="0.02"/> 
+
+    <!-- Tuning AMCL Trigger - Decreasing distance travelled BEFORE update -->
+      <!-- Min distance for update -->
+      <!-- Min rotation for update -->
+      <param name="amcl/update_min_d" value="0.05"/> 
+      <param name="amcl/update_min_a" value="0.05"/> 
+
+    <!-- More... -->
+      <param name="amcl/min_particles" value="300"/>
+
+
 
   <!-- Launch Move Base -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
