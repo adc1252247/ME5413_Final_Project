@@ -3,7 +3,7 @@
 
 > **System Requirements:** Ubuntu 20.04 | ROS Noetic | C++14 and above (*increased from C++11 to support **PCL***) | CMake: 3.0.2 and above
 
-![cover_image](src/me5413_world/media/overview2526.png)
+![cover_image](src/me5413_world/media/overview2526.png) 
 
 ## Strategies
 The main control code is [`main3.cpp`](src\me5413_group9\src\main3.cpp), with some portions of the control in other files.
@@ -73,6 +73,8 @@ The most important files are in `/src/me5413_group9` directory. Otherwise, the o
          ├── lvl2_improved.pgm
          └── lvl2_improved.yaml
 ```
+
+**AI Declaration:** Claude and Gemini were used in the debugging of ROS packages, and resolving issues with libraries like PCL.
 
 ## Installation issues
 There are many dependencies in this project. The following installations (may) be necessary (some of them are included in `ros-noetic-desktop-full` by default, but due to various installation issues they are included in this list to be sure all are met).
