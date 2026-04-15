@@ -53,9 +53,16 @@ int main(int argc, char** argv) {
 
     ros::NodeHandle nh;
 
-    double skip_to, end_at;
-    nh.param("skip_to", skip_to, -1.0);
+    double skip_to, end_at, only = -1.0;
+    nh.param("only", only, -1.0);
+    nh.param("skip_to", skip_to, 2.0);
     nh.param("end_at", end_at, 6.0);
+
+    if ( only > 0 ) { 
+        skip_to = only; 
+        end_at = only; 
+        ROS_WARN("Only running stage %.1f", only);
+    }
 
     bool visit_both_cones;
     nh.param("visit_both_cones", visit_both_cones, false);
@@ -139,7 +146,7 @@ int main(int argc, char** argv) {
     if ( skip_to <= 4.3 ) {
         Section section("4-iii) Pose estimate");
 
-        robot.set_estimate(map_changed);
+        robot.set_estimate(map_changed, Covariance(0.01, 0.01, 0.02));
     }
 
     if ( end_at <= 4.3 )
@@ -152,7 +159,7 @@ int main(int argc, char** argv) {
         // robot.move_to(map_changed.flip());
         
         // Intermediary to help localize
-        robot.move_to(level2_first);
+        // robot.move_to(level2_first);
 
         // Check top position - nearest room 3
         robot.move_to(top_cone);
