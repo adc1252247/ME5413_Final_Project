@@ -43,7 +43,7 @@ roslaunch me5413_world navigation.launch
 # Terminal 3 - Use appropriate python environment
 source devel/setup.bash
 pip install requirements.txt
-rosrun me5413_group9 main
+rosrun me5413_group9 main    # Runs code implemented in .../main3.cpp
 ```
 
 ## Project Breakdown
