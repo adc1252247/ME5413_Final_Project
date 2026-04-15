@@ -6,6 +6,14 @@
 ![cover_image](src/me5413_world/media/overview2526.png)
 
 ## Strategies
+The main control code is [`main3.cpp`](src\me5413_group9\src\main3.cpp), with some portions of the control in other files.
+
+| File | Section |
+| :--: | :------ |
+| [`box_counter.py`](src\me5413_group9\scripts\box_counter.py) | Target 1 - box counting |
+| [`phase_2_slope.cpp`](src\me5413_group9\src\phase_2_slope.cpp) | Target 3 - scaling the slippery ramp |
+| [`corridor_navigator.cpp`](src\me5413_group9\src\corridor_navigator.cpp) | Target 4 - first portion where localization is especially bad |
+
 1) Using waypoints in the room for navigation & fusion of **Tesseract** Optical Character Recognition & **OpenCV's template matching** to read numbers.
 2) Hard-coded waypoints before & after cone.
 3) Wall-following and slope detection strategy to ensure alignment on slippery ramp.
