@@ -493,11 +493,11 @@ ros::Time Robot::wait_cylinder(bool keep_left) {
                 break;
         }
         
-        // Wait for 45 degree angle && cylinder moving away
-        if ( diff > 0.0 && cylinder.yaw > M_PI / 4 )
+        // Wait for under 45 degree angle && cylinder moving away - should have enough time
+        if ( diff > 0.0 && cylinder.yaw < M_PI / 4 )
             break;
 
-        if ( ros::Time::now() > started + ros::Duration(68) ) // Already cycled
+        if ( ros::Time::now() > started + ros::Duration(16) ) // Already cycled
             throw std::runtime_error("<Robot> wait_cylinder waited too long!");
     }
 
@@ -508,7 +508,7 @@ ros::Time Robot::wait_cylinder(bool keep_left) {
 
 void Robot::wait_next_cylinder(ros::Time time) {
     while ( ros::Time::now() > time )
-        time += ros::Duration(68);
+        time += ros::Duration(16); // Wait 1 cycle
     
     ros::Time::sleepUntil(time);
 }
