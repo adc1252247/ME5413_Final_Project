@@ -1,4 +1,4 @@
-#include <iostream>
+// #include <iostream>
 
 #include "robot.hpp"
 #include "template_matching.hpp"
@@ -198,13 +198,13 @@ void Robot::move_to(Pose pose_, int retries) {
         ROS_ERROR("<Robot> move_base did not succeed!");
         ROS_ERROR("        State (%d): %s", end_state.state_, end_state.getText().c_str());
         
-        if ( retries > 0 ) {
-            ROS_INFO("Retry available with manual input to terminal...");
-            std::cout << "\n\nRe-localize, then press 'ENTER'..." << std::endl;
-            char c;
-            std::cin >> c;
-            move_to(pose_, retries - 1);
-        }
+        // if ( retries > 0 ) {
+        //     ROS_INFO("Retry available with manual input to terminal...");
+        //     std::cout << "\n\nRe-localize, then press 'ENTER'..." << std::endl;
+        //     char c;
+        //     std::cin >> c;
+        //     move_to(pose_, retries - 1);
+        // }
         throw std::runtime_error("<Robot> move_base did not succeed!");
     }
 }
@@ -468,22 +468,25 @@ ros::Time Robot::wait_cylinder() {
     ros::Time started = ros::Time::now();
 
     ros::spinOnce();
-    Pose first = detect_cylinder();
+    Pose last = detect_cylinder();
 
     ros::Rate loop_rate(3);
     
-    bool ready = abs(first.yaw) > (M_PI / 4);
+    // bool ready = abs(first.yaw) > (M_PI / 4);
 
-    while ( ros::ok() && !ready ) {
+    while ( ros::ok() ) {
         loop_rate.sleep();
         ros::spinOnce();
         
         Pose cylinder = detect_cylinder();
 
-        ready = cylinder.x == 0 /* None detected */
-             || abs(cylinder.yaw) > abs(first.yaw); /* moving away */
+        double diff = cylinder.yaw - last.yaw;
+        
+        // Wait for 45 degree angle && cylinder moving away
+        if ( diff > 0.0 && cylinder.yaw > M_PI / 4 )
+            break;
 
-        if ( ros::Time::now() > started + ros::Duration(68) )
+        if ( ros::Time::now() > started + ros::Duration(68) ) // Already cycled
             throw std::runtime_error("<Robot> wait_cylinder waited too long!");
     }
 
