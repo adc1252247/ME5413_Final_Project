@@ -27,6 +27,7 @@
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
 #include <move_base_msgs/MoveBaseAction.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
 
 #include <array>
@@ -39,6 +40,9 @@ struct Pose {
     double x   = 0.0;
     double y   = 0.0;
     double yaw = 0.0;
+
+    /// @brief Pose with all values set to 0
+    Pose() = default;
 
     /// @brief Constructor using yaw for angle
     /// @param x_   X coordinate
@@ -62,6 +66,46 @@ struct Pose {
     double get_z() const;
 
     double get_w() const;
+
+    bool operator==(const Pose& rhs) const;
+
+    bool operator!=(const Pose& rhs) const;
+};
+
+struct Covariance {
+    double x   = 0.25;
+    double y   = 0.25;
+    double yaw = 0.07;
+
+    static constexpr double good_threshold = 0.5; // Good linear cov.
+    static constexpr double bad_threshold = 1.5;  // Bad linear cov.
+
+    /// @brief Set with all to 0
+    Covariance() = default;
+
+    /// @brief Construct with covariance values
+    Covariance(double x_, double y_, double yaw_);
+
+    /// @brief Construct from ROS covariance array
+    Covariance(const boost::array<double, 36>& c);
+
+    /// @brief Standard deviation in x
+    double std_x() const;
+
+    /// @brief Standard deviation in y
+    double std_y() const;
+
+    /// @brief Standard deviation in yaw 
+    double std_yaw() const;
+
+    /// @brief Check if this is a good linear covariance
+    bool good() const;
+
+    /// @brief Check if this is a bad linear covariance
+    bool bad() const;
+
+    /// @brief Get as an ROS-appropriate array
+    boost::array<double, 36> array() const;
 };
 
 /// @brief For use in detecting the cylinder or cone from level 2
@@ -80,12 +124,19 @@ class Robot {
         /// @param pose_ Pose estimate
         void set_estimate(Pose pose_);
 
+        /// @brief Set the estimate pose for AMCL with desired covariance
+        /// @param pose_ Pose estimate
+        /// @param cov_  Covariance
+        void set_estimate(Pose pose_, Covariance cov_);
+
         /// @brief Clear the costmap
         void clear_costmap();
 
         /// @brief Move to a desired location in the map frame
         /// @note Runs spinOnce before returning, to ensure up-to-date getters
-        void move_to(Pose pose_);
+        /// @param pose_ Pose to move to
+        /// @param retries How many retriese to move with acceptable covariance
+        void move_to(Pose pose_, int retries = 3);
 
         /// @brief Publishes the clear cone topic for level 1
         void clear_cone();
@@ -95,9 +146,26 @@ class Robot {
         /// @param map Path to map .yaml from package root
         void change_map(const std::string& pkg, const std::string& map);
 
+        /// @brief Stop the robot
+        void stop();
+
     public: /* === GETTERS === */
-        // /// @brief Get the most recent pose of the robot
-        // const Pose& pose() const;
+        /// @brief Get the most recent pose of the robot
+        const Pose& pose() const;
+
+        /// @brief Get the most recent good pose of the robot
+        /// @note This means covariance is 
+        const Pose& last_good_pose() const;
+
+        /// @brief Get the most recent covariance of the robot pose
+        const Covariance& covariance() const;
+
+    private:
+        Pose _latest_pose;
+        Pose _latest_good_pose;
+        Covariance _latest_covariance;
+
+        void pose_callback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
 
     public: /* === CONST METHODS === */
         // /// @brief Detect an obstacle from the scan topic

@@ -38,6 +38,55 @@ double Pose::get_w() const {
     return tf::createQuaternionFromYaw(yaw).getW();
 }
 
+bool Pose::operator==(const Pose& rhs) const {
+    return x == rhs.x && y == rhs.y && yaw == rhs.yaw;
+}
+
+bool Pose::operator!=(const Pose& rhs) const {
+    return !(*this == rhs);
+}
+
+Covariance::Covariance(double x_, double y_, double yaw_):
+    x(x_),
+    y(y_),
+    yaw(yaw_) {}
+
+Covariance::Covariance(const boost::array<double, 36>& c):
+    x(c[0]),
+    y(c[7]),
+    yaw(c[35]) {}
+
+double Covariance::std_x() const {
+    return sqrt(x);
+}
+
+double Covariance::std_y() const {
+    return sqrt(y);
+}
+
+double Covariance::std_yaw() const {
+    return sqrt(yaw);
+}
+
+bool Covariance::good() const {
+    return x < good_threshold && y < good_threshold;
+}
+
+bool Covariance::bad() const {
+    return x > bad_threshold && y > bad_threshold;
+}
+
+boost::array<double, 36> Covariance::array() const {
+    return {
+        x, 0, 0, 0, 0, 0,
+        0, y, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, yaw
+    };
+}
+
 Robot::Robot(): _move_base(std::string("move_base"), true) {
     if ( !_move_base.waitForServer(ros::Duration(1.0)) ) {
         ROS_ERROR("<Robot> move_base was not available in 1.0s!");
@@ -46,7 +95,7 @@ Robot::Robot(): _move_base(std::string("move_base"), true) {
 
     _est = _nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("/initialpose", 1);
 
-
+    _pose = _nh.subscribe("/amcl_pose", 1, &Robot::pose_callback, this);
     // _pose = _nh.subscribe("/amcl_pose", 1, ..., this);
     // _scan = _nh.subscribe();
     // _img  = _nh.subscribe();
@@ -61,8 +110,9 @@ void Robot::clear_cone() {
     ros::spinOnce();
 }
 
-void Robot::move_to(Pose pose_) {
+void Robot::move_to(Pose pose_, int retries) {
     using State = actionlib::SimpleClientGoalState;
+    const Covariance re_est_cov(0.15, 0.15, 0.07);
 
     move_base_msgs::MoveBaseGoal goal;
 
@@ -85,14 +135,56 @@ void Robot::move_to(Pose pose_) {
     while ( ros::ok() && _move_base.getState() == State::PENDING )
         loop_rate.sleep();
 
-    while ( ros::ok() && _move_base.getState() == State::ACTIVE )
+    while ( ros::ok() && _move_base.getState() == State::ACTIVE ) {
+        ros::spinOnce();
+        
+        // If robot gets lost
+        if ( _latest_covariance.bad() ) {
+            const Covariance& c = _latest_covariance;
+            ROS_ERROR("<Robot> move_base motion resulted in too much covariance!");
+            ROS_ERROR("        x: %.2f | y: %.2f | yaw: %.2f", c.x, c.y, c.yaw);
+
+            // Retry
+            if ( retries > 0 ) {
+                ROS_INFO("<Robot> move_to retrying - resetting estimate | remaining: %d", retries);
+                // set_estimate(_latest_good_pose, re_est_cov);
+                set_estimate(_latest_pose, re_est_cov);
+                return move_to(pose_, retries - 1);
+            }
+            else {
+                ROS_ERROR("<Robot> move_to no retries remaining.");
+                ROS_ERROR(
+                    "        Current: (x: %.2f | y: %.2f | yaw: %.2f)",
+                    pose().x,
+                    pose().y,
+                    pose().yaw
+                );
+                stop();
+
+                ROS_ERROR(
+                    "        Target: (x: %.2f | y: %.2f | yaw: %.2f)",
+                    pose_.x,
+                    pose_.y,
+                    pose_.yaw
+                );
+                throw std::runtime_error("<Robot> move_to retries went to 0!");
+            }
+        }
+
         loop_rate.sleep();
+    }
 
     ros::spinOnce();
 
     State end_state = _move_base.getState();
     if ( end_state != State::SUCCEEDED ) {
         ROS_ERROR("<Robot> move_base did not succeed!");
+        // if ( retries > 0 ) {
+        //     ROS_INFO("        Retrying...");
+        //     set_estimate(_latest_good_pose, re_est_cov);
+        //     return move_to(pose_, retries - 1);
+        // }
+
         ROS_ERROR("        State (%d): %s", end_state.state_, end_state.getText().c_str());
         throw std::runtime_error("<Robot> move_base did not succeed!");
     }
@@ -136,6 +228,12 @@ void Robot::change_map(const std::string& pkg, const std::string& map) {
 }
 
 void Robot::set_estimate(Pose pose_) {
+    set_estimate(pose_, Covariance());
+}
+
+void Robot::set_estimate(Pose pose_, Covariance cov_) {
+    stop();
+
     geometry_msgs::PoseWithCovarianceStamped msg;
     
     msg.header.frame_id = "map";
@@ -150,14 +248,7 @@ void Robot::set_estimate(Pose pose_) {
     msg.pose.pose.orientation.z = pose_.get_z();
     msg.pose.pose.orientation.w = pose_.get_w();
 
-    msg.pose.covariance = {
-        0.25, 0,    0, 0, 0, 0,
-        0,    0.25, 0, 0, 0, 0,
-        0,    0,    0, 0, 0, 0,
-        0,    0,    0, 0, 0, 0,
-        0,    0,    0, 0, 0, 0,
-        0,    0,    0, 0, 0, 0.07
-    };
+    msg.pose.covariance = cov_.array();
 
     // First clear the local costmap, then update
     clear_costmap();
@@ -183,4 +274,53 @@ void Robot::clear_costmap() {
         ROS_ERROR("<Robot> clear_costmap failed!");
         throw std::runtime_error("<Robot> clear_costmap failed!");
     }
+}
+
+void Robot::pose_callback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg) {
+    Pose curr(
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        msg->pose.pose.orientation.z,
+        msg->pose.pose.orientation.w
+    );
+        
+    _latest_covariance = msg->pose.covariance;
+
+    _latest_pose = curr;   
+
+    if ( !_latest_covariance.bad() )
+        _latest_good_pose = curr;
+    else
+        ROS_WARN(
+            "<Robot> covariance of pose is very high (x: %.2f, y: %.2f, yaw: %.2f)",
+            _latest_covariance.x,
+            _latest_covariance.y,
+            _latest_covariance.yaw
+        );
+}
+
+const Pose& Robot::pose() const {
+    return _latest_pose;
+}
+
+const Pose& Robot::last_good_pose() const {
+    return _latest_good_pose;
+}
+
+const Covariance& Robot::covariance() const {
+    return _latest_covariance;
+}
+
+void Robot::stop() {
+    using State = actionlib::SimpleClientGoalState;
+    ros::Rate loop_rate(10);
+
+    // Unsure if I can cancel a PENDING state... 
+    while ( ros::ok() && _move_base.getState() == State::PENDING )
+        loop_rate.sleep();
+
+    if ( _move_base.getState() == State::ACTIVE )
+        _move_base.cancelGoal();
+
+    ros::spinOnce();
 }
