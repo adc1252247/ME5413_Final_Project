@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     /// ::: SECTION 4 pt. iii - The 2nd Cone :::
     if ( skip_to <= 4.3 ) {
         robot.set_estimate(map_changed);
-        robot.move_to(map_changed.flip());
+        // robot.move_to(map_changed.flip());
         
         // Intermediary to help localize
         // robot.move_to(level2_first);
