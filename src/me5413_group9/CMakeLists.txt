@@ -53,17 +53,19 @@ include_directories(
 
 
 # Transform 3D LIDAR to 2D LaserScan
-add_executable(laserscan_from_lidar src/laserscan_from_lidar.cpp)
-target_link_libraries(laserscan_from_lidar ${catkin_LIBRARIES})
+# add_executable(laserscan_from_lidar src/sensors/laserscan_from_lidar.cpp)
+# target_link_libraries(laserscan_from_lidar ${catkin_LIBRARIES})
 
-add_executable(main src/main.cpp src/common/template_matching.cpp)
+### OLD - REPLACED
+# add_executable(main src/main.cpp src/common/template_matching.cpp)
+# target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
+
+# add_executable(circle_fitting src/circle_fitting_test.cpp)
+# target_link_libraries(circle_fitting ${catkin_LIBRARIES} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
+
+### Too slow for laptop use
+# add_executable(wall_scan src/sensors/wall_scan.cpp)
+# target_link_libraries(wall_scan ${catkin_LIBRARIES})
+
+add_executable(main src/main3.cpp src/common/robot.cpp src/common/template_matching.cpp)
 target_link_libraries(main ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
-
-add_executable(circle_fitting src/circle_fitting_test.cpp)
-target_link_libraries(circle_fitting ${catkin_LIBRARIES} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
-
-add_executable(wall_scan src/sensors/wall_scan.cpp)
-target_link_libraries(wall_scan ${catkin_LIBRARIES})
-
-add_executable(main3 src/main3.cpp src/common/robot.cpp src/common/template_matching.cpp)
-target_link_libraries(main3 ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
