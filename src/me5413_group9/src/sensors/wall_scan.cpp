@@ -68,7 +68,12 @@ class WallFilterer {
             for ( size_t i = 0; i < data.size() / 22; i++ ) {
                 float z = *(float*)(&data[i * 22 + 8]);
 
-                if ( z < settings.min_height || z > settings.max_height )
+                // Too high to matter
+                if ( z > settings.max_height )
+                    continue;
+
+                // Don't want points below or at 0
+                if ( z <= 0.0 )
                     continue;
 
                 float x = *(float*)(&data[i * 22]);
@@ -79,14 +84,21 @@ class WallFilterer {
 
                 if ( angle_bin >= settings.increments )
                     continue;
+
+                // Can't tell due to obstruction
+                if ( z < settings.min_height && std::isinf(ranges[angle_bin]) ) {
+                    ranges[angle_bin] = std::numeric_limits<float>::quiet_NaN();
+                    continue;
+                }
                 
                 float distance   = sqrt(x*x + y*y);
                 float registered = ranges[angle_bin];
 
-                if ( registered == std::numeric_limits<float>::infinity() )
+                if ( std::isinf(registered) || std::isnan(registered) )
                     ranges[angle_bin] = distance;
                 else if ( registered > distance )
                     ranges[angle_bin] = distance;
+                // else ;
             }
         }
 
