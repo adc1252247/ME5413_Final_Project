@@ -35,10 +35,10 @@
         - min_height 0.8 filters out boxes
         - max_height 1.8 filters out tops of doorframes
     -->
-    <node name="wall_scan" pkg="me5413_group9" type="wall_scan" output="screen">
+    <!-- <node name="wall_scan" pkg="me5413_group9" type="wall_scan" output="screen">
         <param name="lidar_topic" value="/mid/points"/>
         <param name="output_topic" value="/front/filtered_scan"/>
         <param name="min_height" value="0.8"/>
         <param name="max_height" value="1.8"/>
-    </node>
+    </node> -->
 </launch>

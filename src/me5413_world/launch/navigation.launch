@@ -13,7 +13,7 @@
     <!-- AMCL Misc. -->
       <param name="amcl/odom_model_type" value="diff-corrected"/>
 
-      <param name="amcl/scan_topic" value="/front/filtered_scan"/>
+      <param name="amcl/scan_topic" value="/front/scan"/>
       
       <param name="amcl/laser_max_beams" value="120"/>
 
