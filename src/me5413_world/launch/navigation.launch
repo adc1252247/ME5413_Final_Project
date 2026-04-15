@@ -74,8 +74,8 @@
       <param name="amcl/max_particles" value="5000"/>
 
     <!-- Remove recovery -->
-      <param name="amcl/recovery_alpha_fast" value="0.0">
-      <param name="amcl/recovery_alpha_slow" value="0.001">
+      <param name="amcl/recovery_alpha_fast" value="0.0"/>
+      <param name="amcl/recovery_alpha_slow" value="0.001"/>
 
   <!-- Launch Move Base -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
