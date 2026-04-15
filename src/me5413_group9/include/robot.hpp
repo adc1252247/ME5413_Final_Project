@@ -24,15 +24,23 @@
 #ifndef ROBOT_HPP_
 #define ROBOT_HPP_
 
+#include "template_matching.hpp"
+
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <sensor_msgs/LaserScan.h>
 
-
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <fstream>
+#include <limits>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 /// @brief A pose in the map frame
@@ -70,6 +78,9 @@ struct Pose {
     bool operator==(const Pose& rhs) const;
 
     bool operator!=(const Pose& rhs) const;
+
+    /// Use translation of poses (in this frame)
+    Pose operator+(const Pose& rhs) const;
 };
 
 struct Covariance {
@@ -174,8 +185,30 @@ class Robot {
         // /// Any radius close to 0.5m is a cylinder
         // std::vector<Level2Obstacle> detect_obstacles() const;
 
-        // /// @brief Checks if a cone is visible AND in +/- 45 degrees from front of robot
-        // bool facing_cone() const;
+        /// @brief Checks if a cone is visible AND in +/- 45 degrees from front of robot
+        bool detect_cone() const;
+
+        /// @brief Gets the pose of any cylinder of radius ~0.5m detected
+        Pose detect_cylinder() const;
+
+        /// @brief Wait for cylinder to be at a safe distance
+        /// @note Assumes perpendicular to motion of cylinder
+        ros::Time wait_cylinder();
+
+        /// @brief Wait for cylinder to cycle to same point
+        void wait_next_cylinder(ros::Time time);
+
+    private:
+        std::vector<float> _ranges;
+        float _angle_min;
+        float _angle_max;
+        float _angle_increment;
+        float _range_min;
+        float _range_max;
+
+        std::vector<std::pair<float, float>> pointify() const;
+
+        void scan_callback(const sensor_msgs::LaserScan::ConstPtr& msg);
 
         // /// @brief Get time of safe passage based on cylinder position
         // ros::Time safe_cylinder_timing() const;
@@ -196,11 +229,25 @@ class Robot {
         // cv::Mat draw_matched_features(int box);
 
     private:
-        // /// @brief Initialize the robot feature matching
-        // void init_matching();
+        void init_detection();
 
-        // /// @brief Get the best matched "template"
-        // int best_match(const cv::Mat& image);
+        int read_target();
+
+    public:
+        int _target_box = 0;
+        cv::Mat _curr_img;
+
+        /// @brief Check if target box is found
+        bool detect_target_box();
+
+        /// @brief Get the target box's value
+        int target_box();
+
+        /// @brief Get the current box viewed
+        int box_found();
+
+    public:
+        /// 
 
         // /// @brief Get the template for a box's class
         // const cv::Mat& get_template(int box);

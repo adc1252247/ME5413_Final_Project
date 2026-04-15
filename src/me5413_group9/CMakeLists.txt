@@ -65,5 +65,5 @@ target_link_libraries(circle_fitting ${catkin_LIBRARIES} ${PCL_LIBRARIES} pcl_co
 add_executable(wall_scan src/sensors/wall_scan.cpp)
 target_link_libraries(wall_scan ${catkin_LIBRARIES})
 
-add_executable(main3 src/main3.cpp src/common/robot.cpp)
-target_link_libraries(main3 ${catkin_LIBRARIES})
+add_executable(main3 src/main3.cpp src/common/robot.cpp src/common/template_matching.cpp)
+target_link_libraries(main3 ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES} pcl_common pcl_segmentation pcl_sample_consensus)
