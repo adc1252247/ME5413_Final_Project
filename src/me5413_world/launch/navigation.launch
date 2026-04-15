@@ -17,12 +17,18 @@
       
       <param name="amcl/laser_max_beams" value="120"/>
 
+      <!-- <param name="amcl/laser_model_type" value="likelihood_field_prob"/> -->
+      <!-- <param name="amcl/do_beamskip" value="true"/> -->
+      <!-- <param name="amcl/beam_skip_threshold" value="0.7"/> -->
+      <!-- <param name="amcl/beam_skip_distance" value="5.0"/>  -->
+
     <!-- Tuning AMCL laser - adjusted to listen almost only to positive matches with the map -->
       <!-- laser_z_hit - Weightage for "correct" beams -->
       <!-- laser_z_rand - Random readin tolerance --> 
       <!-- laser_z_short - Tolerance for obstacles -->
       <!-- laser_z_max - Ignore inf length beams -->
       <param name="amcl/laser_z_hit" value="0.97"/>
+      <param name="amcl/laser_sigma_hit" value="0.01"/> 
       <param name="amcl/laser_z_rand" value="0.01"/> 
       <param name="amcl/laser_z_short" value="0.02"/> 
       <param name="amcl/laser_z_max" value="0"/>  
@@ -45,23 +51,30 @@
       <param name="amcl/update_min_d" value="0.05"/> 
       <param name="amcl/update_min_a" value="0.05"/> 
 
-    <!-- More... -->
+    <!-- Increasing min for better tracking, decreasing max for performance -->
       <param name="amcl/min_particles" value="300"/>
+      <param name="amcl/max_particles" value="2000"/>
 
 
 
   <!-- Launch Move Base -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
 
-    <param name="move_base/global_costmap/update_frequency" value="5.0"/>
-    <param name="move_base/local_costmap/update_frequency" value="10.0"/>
-    <param name="move_base/planner_frequency" value="5.0"/>
-    <param name="move_base/controller_frequency" value="10.0"/>
+    <!-- Reduce resource utilization -->
+    <param name="move_base/global_costmap/update_frequency" value="3.0"/>
+    <param name="move_base/local_costmap/update_frequency" value="6.0"/>
+    <param name="move_base/planner_frequency" value="3.0"/>
+    <param name="move_base/controller_frequency" value="6.0"/>
+
+    <param name="move_base/local_costmap/resolution" value="0.15"/>
+    <param name="move_base/global_costmap/resolution" value="0.15"/>
+    <!-- The following significantly sped up TEB -->
+    <param name="move_base/TebLocalPlannerROS/weight_kinematics_nh" value="100"/>
 
     <!-- Get move_base to use the correct topics -->
       <param name="move_base/local_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
       <param name="move_base/local_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
-      <param name="move_base/global_costmap/obstacles_layer/scan/topic" value="/front/scan"/>
+      <param name="move_base/global_costmap/obstacles_layer/scan/topic" value="/front/filtered_scan"/>
       <param name="move_base/global_costmap/obstacles_layer/scan/sensor_frame" value="velodyne"/>
 
     <!-- Disable move_base's recovery behaviors & oscillation stuff -->
