@@ -28,7 +28,6 @@
       <!-- laser_z_short - Tolerance for obstacles -->
       <!-- laser_z_max - Ignore inf length beams -->
       <param name="amcl/laser_z_hit" value="0.97"/>
-      <param name="amcl/laser_sigma_hit" value="0.01"/> 
       <param name="amcl/laser_z_rand" value="0.01"/> 
       <param name="amcl/laser_z_short" value="0.02"/> 
       <param name="amcl/laser_z_max" value="0"/>  
@@ -53,7 +52,7 @@
 
     <!-- Increasing min for better tracking, decreasing max for performance -->
       <param name="amcl/min_particles" value="300"/>
-      <param name="amcl/max_particles" value="2000"/>
+      <!-- <param name="amcl/max_particles" value="2000"/> -->
 
 
 
