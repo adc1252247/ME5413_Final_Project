@@ -1,7 +1,72 @@
 # Final Project Overview
-Forked from [NUS-Advanced-Robotics-Centre's ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
+> Forked from [NUS-Advanced-Robotics-Centre's ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
 
-## Setup
+> **System Requirements:** Ubuntu 20.04 | ROS Noetic | C++14 and above (*increased from C++11 to support **PCL***) | CMake: 3.0.2 and above
+
+![cover_image](src/me5413_world/media/overview2526.png)
+
+## Strategies
+1) Using waypoints in the room for navigation & fusion of **Tesseract** Optical Character Recognition & **OpenCV's template matching** to read numbers.
+2) Hard-coded waypoints before & after cone.
+3) Wall-following and slope detection strategy to ensure alignment on slippery ramp.
+4) Wall-following in first corridor, then waypoints & circle-detection using **PCL** to pass obstacle.
+5) Waypoints, circle-detection & **OpenCV's feature matching** to read boxes for final. Here the waypoints were never reached, due to poor localization using *AMCL*.
+
+**Navigation & Planning** used ROS Noetic's `move_base` package with *time elastic band* (TEB) local planning.
+**Localization & Mapping** used `AMCL`, which caused much of the problems. worked well for floor 1, but not for floor 2 where the particles never converged.
+
+![level_1](src/me5413_world/media/my_map.png)
+![level_2](src/me5413_world/media/lvl2_improved.png)
+
+**Running the code:**
+```sh
+# All commands should be run from the root of this repository
+# Ensure all requirements are installed correctly
+
+# Terminal 1
+catkin_make
+source devel/setup.bash
+roslaunch me5413_world world.launch
+
+# Terminal 2
+source devel/setup.bash
+roslaunch me5413_world navigation.launch
+
+# Terminal 3 - Use appropriate python environment
+source devel/setup.bash
+pip install requirements.txt
+rosrun me5413_group9 main
+```
+
+## Project Breakdown
+The most important files are in `/src/me5413_group9` directory. Otherwise, the only changes were some config files and params in launch files.
+```txt
+/src/me5413_group9/
+     ├── src/                       ## The following are the imporant files
+     │   ├── main.cpp               # Defines the "main" node to be run, and handles level 2
+     │   ├── phase_2_slope.cpp      # Defines the logic for navigating the outdoor ramp
+     │   ├── corridor_navigator.cpp # Defines the logic for getting through the 
+     │   │                          # first corridor on level 2
+     │   └── ...                    # The rest are either unused, or define utilities
+     ├── boxes/cropped/...          # Images used for matching boxes w/ OpenCV
+     │
+     └── scripts/
+         └── box_counter.py         # The first-floor big room logic
+
+/src/me5413_world/
+     ├── launch/
+     │   ├── navigation.launch      # AMCL & move_base tuning 
+     │   └── ...                    # Other launch files have no major changes
+     │
+     └── maps/                      # The following maps are in use
+         ├── my_map.pgm
+         ├── my_map.yaml 
+         ├── lvl2_improved.pgm
+         └── lvl2_improved.yaml
+```
+
+## Installation issues
+There are many dependencies in this project. The following installations (may) be necessary (some of them are included in `ros-noetic-desktop-full` by default, but due to various installation issues they are included in this list to be sure all are met).
 ```sh
 # Look at ROS website for full installation instructions
 sudo apt install ros-noetic-desktop-full
@@ -62,80 +127,7 @@ sudo apt-get install -y \
 sudo apt-get install -y ros-noetic-teleop-twist-keyboard
 ```
 
-## Running the code
-```sh
-# Ensure all dependencies are installed - see below
-# Call all commands from this repository
-catkin_make
-
-# Terminal 1
-source devel/setup.bash
-roslaunch me5413_world world.launch
-
-# Terminal 2
-source devel/setup.bash
-roslaunch me5413_world navigation.launch
-# Before opening the next terminal, click the "Respawn Objects" button in RVIZ
-
-# Terminal 3
-source devel/setup.bash
-roslaunch me5413_group9 main
-```
-
-### Code Breakdown
-The most important files are in `/src/me5413_group9` directory. Otherwise, the only changes were some config files and params in launch files.
-```txt
-/src/me5413_group9/
-     ├── src/                       ## The following are the imporant files
-     │   ├── main.cpp               # Defines the "main" node to be run, and handles level 2
-     │   ├── phase_2_slope.cpp      # Defines the logic for navigating the outdoor ramp
-     │   ├── corridor_navigator.cpp # Defines the logic for getting through the 
-     │   │                          # first corridor on level 2
-     │   └── ...                    # The rest are either unused, or define utilities
-     │
-     ├── scripts/
-         └── box_counter.py         # The first-floor big room logic
-```
-
-### More Details
-**Mapping:** For mapping we used GMapping through `me5413_world mapping.launch`, but with a modified `/front/scan` topic which increased the range of the scan, and showed short features such as the lower ledges in the scene. This was handled with node `me5413_group9 laserscan_from_lidar` which requires that the original `/front/scan` be remapped to something else.
-
-**Box Detection & Counting:** For detecting the numbers on the boxes, we used a combination of OpenCV's feature matching, and Tesseract ORT. This script is at `src/me5413_world/scripts/box_counter_node.py`. It uses templates located under `src/me5413_group9/boxes/cropped`.
-
-You must install Tesseract (in addition to ROS Noetic):
-```sh
-sudo apt update
-sudo apt install -y tesseract-ocr
-
-# Verify
-tesseract --version
-
-pip install -r requirements.txt
-```
-
-Further python libraries are assumed to be available through the installation of ROS Noetic, and as such are not included in the `requirements.txt`:
-| Python import | ROS apt package |
-|---|---|
-| `rospy` | `ros-noetic-rospy` |
-| `tf`, `tf2_ros` | `ros-noetic-tf`, `ros-noetic-tf2-ros` |
-| `actionlib` | `ros-noetic-actionlib` |
-| `cv_bridge` | `ros-noetic-cv-bridge` |
-| `sensor_msgs`, `nav_msgs`, `std_msgs`, `geometry_msgs` | `ros-noetic-common-msgs` |
-| `move_base_msgs` | `ros-noetic-move-base-msgs` |
-| `visualization_msgs` | Part of `common_msgs` |
-
-**Traversing the ramp:** Due to immense slippage, a ...
-
-**Traversing the empty corridor:** The first corridor encountered on the 2nd level is very feature-less, meaning that the AMCL localization really struggles. As such, we use 
-
-## Further dependencies
-**Navigation stack**
-```sh
-sudo apt install -y ros-noetic-navigation ros-noetic-move-base ros-noetic-amcl ros-noetic-map-server ros-noetic-teb-local-planner
-```
-
 # Original Documentation & Instructions
-
 NUS ME5413 Autonomous Mobile Robotics Final Project AY25/26
 > Authors: [Christina](https://github.com/ldaowen), [Ziggy](https://github.com/ziggyhuang), [Dongen](https://github.com/nuslde), and [Shuo](https://github.com/SS47816)
 
@@ -146,7 +138,7 @@ NUS ME5413 Autonomous Mobile Robotics Final Project AY25/26
 ![GitHub Repo stars](https://img.shields.io/github/stars/NUS-Advanced-Robotics-Centre/ME5413_Final_Project?color=FFE333)
 ![GitHub Repo forks](https://img.shields.io/github/forks/NUS-Advanced-Robotics-Centre/ME5413_Final_Project?color=FFE333)
 
-![cover_image](src/me5413_world/media/overview2526.png)
+
 
 ## Dependencies
 
