@@ -1,6 +1,67 @@
 # Final Project Overview
 Forked from [NUS-Advanced-Robotics-Centre's ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
 
+## Setup
+```sh
+# Look at ROS website for full installation instructions
+sudo apt install ros-noetic-desktop-full
+
+# For Image processing
+sudo apt update
+sudo apt install tesseract-ocr libtesseract-dev libleptonica-dev
+
+# Ensure you have pip or pip3 available
+pip3 install -r requirements.txt
+
+# Ensure OpenCV, TF2, and additional tools/packages are available
+sudo apt install -y \
+  ros-noetic-cv-bridge \
+  ros-noetic-tf2-ros \
+  ros-noetic-tf \
+  ros-noetic-actionlib \
+  ros-noetic-move-base \
+  ros-noetic-move-base-msgs \
+  ros-noetic-map-server \
+  ros-noetic-amcl \
+  ros-noetic-teb-local-planner \
+  ros-noetic-pcl-ros
+
+# You may have to install the following manually
+sudo apt-get install -y ros-noetic-rviz
+
+sudo apt-get install -y \
+  ros-noetic-gazebo-ros \ 
+  ros-noetic-gazebo-ros-pkgs \
+  ros-noetic-gazebo-msgs \
+  ros-noetic-gazebo-plugins \
+  ros-noetic-gazebo-ros-control
+
+sudo apt-get install -y \
+  ros-noetic-jsk-rviz-plugins \
+  ros-noetic-rqt-common-plugins
+
+# For the jackal nodes and similar
+sudo apt-get install -y \
+  ros-noetic-jackal-simulator \
+  ros-noetic-jackal-control \
+  ros-noetic-jackal-navigation
+
+sudo apt-get install -y \
+  ros-noetic-velodyne-gazebo-plugins \
+  ros-noetic-hector-gazebo-plugins
+
+# To get sensors to work
+sudo apt-get install -y \
+  ros-noetic-sick-tim \
+  ros-noetic-lms1xx \
+  ros-noetic-velodyne-description \
+  ros-noetic-pointgrey-camera-description \
+  ros-noetic-flir-camera-description
+
+# For optional keyboard control
+sudo apt-get install -y ros-noetic-teleop-twist-keyboard
+```
+
 ## Running the code
 ```sh
 # Ensure all dependencies are installed - see below
