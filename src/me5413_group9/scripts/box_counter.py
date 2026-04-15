@@ -11,6 +11,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from cv_bridge import CvBridge
 from tf.transformations import quaternion_from_euler
 
+RESET_COOLDOWN = 6.0 # Give some time for AMCL to re-localize
 BOX_SIZE = 0.8
 MIN_BOX_SPACING = 1.5
 WORLD_SPAWN_X = (-18.0, -2.0)
@@ -35,6 +36,8 @@ class BoxCounter:
         self.bridge = CvBridge()
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
+        self.last_reset_time = rospy.Time.now()
 
         # map baseline
         self.wall_mask = None
@@ -175,6 +178,14 @@ class BoxCounter:
 
     def _reset_pose(self, x, y, yaw, reason):
         rospy.logwarn("AMCL RESET (%s): (%.1f, %.1f, %.0f deg)", reason, x, y, math.degrees(yaw))
+        
+        now = rospy.Time.now()
+        if (now - self.last_reset_time).to_sec() < RESET_COOLDOWN:
+            seconds = RESET_COOLDOWN - (now - self.last_reset_time).to_sec()
+            rospy.logwarn("         Cooldown for %.0f seconds", seconds)
+            rospy.sleep(seconds)
+        self.last_reset_time = now
+
         msg = PoseWithCovarianceStamped()
         msg.header.frame_id = 'map'
         msg.header.stamp = rospy.Time.now()
@@ -192,7 +203,7 @@ class BoxCounter:
             rospy.ServiceProxy('/move_base/clear_costmaps', Empty)()
         except Exception:
             pass
-        rospy.sleep(0.5)
+        rospy.sleep(2.0) # More time for AMCL to do it's thing
 
     def check_amcl_drift(self):
         pose = self.get_robot_pose()
@@ -785,18 +796,19 @@ class BoxCounter:
                             self._escape_stage1()
                             self.move_client.send_goal(self._make_goal(mx, my, myaw))
                             last_pose, last_move_time = cur, rospy.Time.now()
-                        elif stall_count == 2 or nearby:
-                            rospy.logwarn("Sub-goal %d stall#%d -> backup+rotate",
-                                          i+1, stall_count)
-                            self._escape_stage2()
-                            self.move_client.send_goal(self._make_goal(mx, my, myaw))
-                            last_pose, last_move_time = cur, rospy.Time.now()
-                        else:
-                            rospy.logwarn("Sub-goal %d stall#%d -> skip-ahead",
-                                          i+1, stall_count)
-                            self.move_client.cancel_goal()
-                            skip_ahead = True
-                            break
+                        # The following throws off the robot near end of level 1...
+                        # elif stall_count == 2 or nearby:
+                        #     rospy.logwarn("Sub-goal %d stall#%d -> backup+rotate",
+                        #                   i+1, stall_count)
+                        #     self._escape_stage2()
+                        #     self.move_client.send_goal(self._make_goal(mx, my, myaw))
+                        #     last_pose, last_move_time = cur, rospy.Time.now()
+                        # else:
+                        rospy.logwarn("Sub-goal %d stall#%d -> skip-ahead",
+                                        i+1, stall_count)
+                        self.move_client.cancel_goal()
+                        skip_ahead = True
+                        break
 
                 if elapsed > timeout_per_wp:
                     rospy.logwarn("Sub-goal %d TIMEOUT, skip-ahead", i+1)
