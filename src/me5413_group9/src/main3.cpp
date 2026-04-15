@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     ros::NodeHandle nh;
 
     double skip_to, end_at;
-    nh.param("skip_to", skip_to, 0.0);
+    nh.param("skip_to", skip_to, -1.0);
     nh.param("end_at", end_at, 6.0);
 
     bool visit_both_cones;
@@ -64,18 +64,20 @@ int main(int argc, char** argv) {
 
     /// :::::::::::::::::::::::::::::::::::::::::
     /// ::: SECTION 0 - Initial Pose Estimate :::
-    if ( skip_to <= 0 ) {
+    if ( skip_to <= 0.0 ) {
         robot.set_estimate(spawn);
+        ros::Duration(2.0).sleep(); // Just in case...
     }
 
     /// ::::::::::::::::::::::::::::::::
     /// ::: SECTION 1 - Box Counting :::
-    if ( skip_to <= 1 ) {
+    if ( skip_to <= 1.0 ) {
         Section section("1) Box counting");
         
         // Implemented in "scripts/box_counter.py"
         if ( int err = system("rosrun me5413_group9 box_counter.py") ) {
             ROS_ERROR("Section 1 script failed w/ error code %d!", err);
+            return err; // Propagate error
         }
     }
 
@@ -86,7 +88,7 @@ int main(int argc, char** argv) {
     /// ::::::::::::::::::::::::::::::::
     /// ::: SECTION 2 - Level 1 cone :::
 
-    if ( skip_to <= 2 ) {
+    if ( skip_to <= 2.0 ) {
         Section section("2) Passing the cone");
         
         robot.move_to(before_cone);
@@ -94,7 +96,7 @@ int main(int argc, char** argv) {
         robot.move_to(after_cone);
     }
 
-    if ( end_at <= 2 )
+    if ( end_at <= 2.0 )
         return 0;
 
     /// ::::::::::::::::::::::::::::
@@ -106,19 +108,19 @@ int main(int argc, char** argv) {
         JackalPotentialField().run();
     }
 
-    if ( end_at <= 3 )
+    if ( end_at <= 3.0 )
         return 0;
 
     /// ::::::::::::::::::::::::::::::::::::::
     /// ::: SECTION 4 pt. i - The corridor :::
-    if ( skip_to <= 4 ) {
+    if ( skip_to <= 4.1 ) {
         Section section("4-i) The corridor");
 
         // Implemented in "src/corridor_navigator.cpp"
         OpeningTracker().run();
     }
 
-    if ( end_at <= 4 )
+    if ( end_at <= 4.1 )
         return 0;
 
     /// :::::::::::::::::::::::::::::::::::::
