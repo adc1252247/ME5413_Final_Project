@@ -293,7 +293,7 @@ bool go_to_room(Robot& robot, int room) {
     const Path& path = paths[room - 1];
 
     robot.move_to(path.first);
-    cylinder_time = robot.wait_cylinder();
+    cylinder_time = robot.wait_cylinder(room > 2);
     robot.move_to(path.second);
     current_room = room;
 

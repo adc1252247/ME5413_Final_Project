@@ -464,7 +464,7 @@ Pose Robot::detect_cylinder() const {
     return Pose(0, 0, 0);
 }
 
-ros::Time Robot::wait_cylinder() {
+ros::Time Robot::wait_cylinder(bool keep_left) {
     ros::Time started = ros::Time::now();
 
     ros::spinOnce();
@@ -481,6 +481,17 @@ ros::Time Robot::wait_cylinder() {
         Pose cylinder = detect_cylinder();
 
         double diff = cylinder.yaw - last.yaw;
+
+        bool appropriate_angle = abs(cylinder.yaw) > 0 && abs(cylinder.yaw) < M_PI / 4;
+
+        // Move when in front, moving leftwards
+        if ( appropriate_angle ) {
+            if ( keep_left && cylinder.yaw > last.yaw )
+                break;
+
+            if ( (!keep_left) && cylinder.yaw < last.yaw )
+                break;
+        }
         
         // Wait for 45 degree angle && cylinder moving away
         if ( diff > 0.0 && cylinder.yaw > M_PI / 4 )

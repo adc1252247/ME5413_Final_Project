@@ -193,7 +193,8 @@ class Robot {
 
         /// @brief Wait for cylinder to be at a safe distance
         /// @note Assumes perpendicular to motion of cylinder
-        ros::Time wait_cylinder();
+        /// @param keep_left Only move when the cylinder is moving front left
+        ros::Time wait_cylinder(bool keep_left);
 
         /// @brief Wait for cylinder to cycle to same point
         void wait_next_cylinder(ros::Time time);
