@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include "robot.hpp"
 #include "template_matching.hpp"
 
@@ -195,6 +197,14 @@ void Robot::move_to(Pose pose_, int retries) {
     if ( end_state != State::SUCCEEDED ) {
         ROS_ERROR("<Robot> move_base did not succeed!");
         ROS_ERROR("        State (%d): %s", end_state.state_, end_state.getText().c_str());
+        
+        if ( retries > 0 ) {
+            ROS_INFO("Retry available with manual input to terminal...");
+            std::cout << "\n\nRe-localize, then press 'ENTER'..." << std::endl;
+            char c;
+            std::cin >> c;
+            move_to(pose_, retries - 1);
+        }
         throw std::runtime_error("<Robot> move_base did not succeed!");
     }
 }
