@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
 
     double skip_to, end_at, only = -1.0;
     nh.param("only", only, -1.0);
-    nh.param("skip_to", skip_to, 2.0);
+    nh.param("skip_to", skip_to, -1.0);
     nh.param("end_at", end_at, 6.0);
 
     if ( only > 0 ) { 
