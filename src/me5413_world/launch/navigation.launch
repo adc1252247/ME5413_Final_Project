@@ -22,15 +22,30 @@
       <!-- <param name="amcl/beam_skip_threshold" value="0.7"/> -->
       <!-- <param name="amcl/beam_skip_distance" value="5.0"/>  -->
 
+      <param name="amcl/laser_model_type" value="likelihood_field_prob"/>
+      <param name="amcl/do_beamskip" value="true"/>
+      <param name="amcl/beam_skip_threshold" value="0.3"/>
+      <param name="amcl/beam_skip_distance" value="0.5"/>
+      <param name="amcl/beam_skip_error_threshold" value="0.9"/>
+
+    <!-- Make bad particles DIE FASTER -->
+      <param name="amcl/resample_interval" value="1"/>
+      <param name="amcl/kld_err" value="0.01"/>
+      <param name="amcl/transform_tolerance" value="0.5"/>
+
     <!-- Tuning AMCL laser - adjusted to listen almost only to positive matches with the map -->
       <!-- laser_z_hit - Weightage for "correct" beams -->
       <!-- laser_z_rand - Random readin tolerance --> 
       <!-- laser_z_short - Tolerance for obstacles -->
       <!-- laser_z_max - Ignore inf length beams -->
-      <param name="amcl/laser_z_hit" value="0.97"/>
+      <!-- <param name="amcl/laser_z_hit" value="0.97"/>
       <param name="amcl/laser_z_rand" value="0.01"/> 
       <param name="amcl/laser_z_short" value="0.02"/> 
-      <param name="amcl/laser_z_max" value="0"/>  
+      <param name="amcl/laser_z_max" value="0"/>   -->
+      <param name="amcl/laser_z_hit" value="0.85"/>
+      <param name="amcl/laser_z_rand" value="0.00"/> 
+      <param name="amcl/laser_z_short" value="0.05"/> 
+      <param name="amcl/laser_z_max" value="0.1"/> 
 
     <!-- Tuning AMCL Motion - Increasing noise and randomness in model for motion 
       - Increasing these reduced drift when stationary
@@ -39,10 +54,14 @@
       <!-- alpha2 - Rotation error from Translation -->
       <!-- alpha3 - Translation error from Translation -->
       <!-- alpha4 - Translation error from Rotation -->
-      <param name="amcl/alpha1" value="0.4"/> 
-      <param name="amcl/alpha2" value="0.4"/> 
-      <param name="amcl/alpha3" value="0.05"/> 
-      <param name="amcl/alpha4" value="0.02"/> 
+      <!-- <param name="amcl/alpha1" value="0.4"/>  -->
+      <param name="amcl/odom_alpha1" value="0.01"/> 
+      <!-- <param name="amcl/alpha2" value="0.4"/>  -->
+      <param name="amcl/odom_alpha2" value="0.01"/> 
+      <!-- <param name="amcl/alpha3" value="0.05"/>  -->
+      <param name="amcl/odom_alpha3" value="0.005"/> 
+      <!-- <param name="amcl/alpha4" value="0.02"/>  -->
+      <param name="amcl/odom_alpha4" value="0.003"/> 
 
     <!-- Tuning AMCL Trigger - Decreasing distance travelled BEFORE update -->
       <!-- Min distance for update -->
@@ -52,9 +71,11 @@
 
     <!-- Increasing min for better tracking, decreasing max for performance -->
       <param name="amcl/min_particles" value="300"/>
-      <!-- <param name="amcl/max_particles" value="2000"/> -->
+      <param name="amcl/max_particles" value="5000"/>
 
-
+    <!-- Remove recovery -->
+      <param name="amcl/recovery_alpha_fast" value="0.0">
+      <param name="amcl/recovery_alpha_slow" value="0.001">
 
   <!-- Launch Move Base -->
   <include file="$(find jackal_navigation)/launch/include/move_base.launch" />
