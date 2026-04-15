@@ -109,6 +109,7 @@
 
     <!-- Try time-elastic-band local planner -->
     <param name="move_base/base_local_planner" value="teb_local_planner/TebLocalPlannerROS"/>
+    <param name="move_base/TebLocalPlannerROS/max_vel_x" value="0.7"/>
 
 
   <!-- Launch Rviz with our settings -->
