@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     ros::NodeHandle nh;
 
     double skip_to, end_at;
-    nh.param("skip_to", skip_to, 5.0);
+    nh.param("skip_to", skip_to, 0.0);
     nh.param("end_at", end_at, 6.0);
 
     bool visit_both_cones;
