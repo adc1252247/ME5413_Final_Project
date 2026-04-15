@@ -183,9 +183,12 @@ int main(int argc, char** argv) {
 
     ROS_INFO("wall_scan running...");
 
+    float loop_rate;
+
+    nh.param<float>("loop_rate", loop_rate, 6);
+
     std::string lidar_topic;
     std::string output_topic;
-    float min_height;
 
     nh.param<std::string>("lidar_topic", lidar_topic, "/mid/points");
     nh.param<std::string>("output_topic", output_topic, "/front/filtered_scan");
@@ -206,5 +209,10 @@ int main(int argc, char** argv) {
     WallFilterer filterer(lidar_topic, output_topic, settings);
 
     /// @todo 
-    ros::spin();
+    // ros::spin();
+    ros::Rate looper(loop_rate);
+    while ( ros::ok() ) {
+        ros::spinOnce();
+        looper.sleep();
+    }
 }
