@@ -43,7 +43,8 @@ The most important files are in `/src/me5413_group9` directory. Otherwise, the o
 ```txt
 /src/me5413_group9/
      ├── src/                       ## The following are the imporant files
-     │   ├── main.cpp               # Defines the "main" node to be run, and handles level 2
+     │   ├── main3.cpp              # Defines the "main" node to be run, and handles level 2
+     │   │                          # "main" is an older variant - same logic, same flow, just before TEB tuning
      │   ├── phase_2_slope.cpp      # Defines the logic for navigating the outdoor ramp
      │   ├── corridor_navigator.cpp # Defines the logic for getting through the 
      │   │                          # first corridor on level 2
